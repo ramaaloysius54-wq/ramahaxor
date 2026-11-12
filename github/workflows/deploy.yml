@@ -1,0 +1,58 @@
+name: CI/CD Pipeline HRIS Website
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    name: Deploy HRIS to VPS
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🧪 Clean Install & Build React HRIS (Di GitHub)
+        run: |
+          npm ci
+          npm run build
+
+      - name: 🚀 Sync & Restart di VPS (/var/www/hrd)
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          sudo apt-get update && sudo apt-get install -y sshpass rsync
+          
+          echo "1. Membuat folder /var/www/hrd di VPS jika belum ada..."
+          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198 "$VPS_USER@$VPS_HOST" "mkdir -p /var/www/hrd"
+
+          echo "2. Mengirim file website HRIS ke VPS..."
+          sshpass -e rsync -avz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            -e "ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198" \
+            ./ "$VPS_USER@$VPS_HOST:/var/www/hrd/"
+          
+          echo "3. Install module, Build & Jalankan HRIS via PM2 di VPS..."
+          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198 "$VPS_USER@$VPS_HOST" << 'ENDSSH'
+            export PATH=$PATH:/usr/local/bin:/usr/bin:~/.npm-global/bin
+            cd /var/www/hrd
+            
+            npm ci
+            npm run build
+            
+            # Menjalankan hasil build React (folder dist) di port 3000 menggunakan PM2
+            pm2 delete hris-web || true
+            pm2 serve dist 3000 --name "hris-web" --spa
+            pm2 save
+          ENDSSH

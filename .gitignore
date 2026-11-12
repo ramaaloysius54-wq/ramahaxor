@@ -1,0 +1,51 @@
+# --- Dependencies ---
+/node_modules
+/.pnp
+.pnp.js
+
+# --- Testing & Build Output ---
+/dist
+/build
+/.next
+/out
+
+# --- Environment & Secrets (Sangat Penting!) ---
+.env
+.env.local
+.env.development.local
+.env.production.local
+.env*.local
+
+# --- Editor & IDE Config ---
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# --- OS Files & Temporary ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Database & Storage Local ---
+*.sqlite
+*.sqlite-journal
+/supabase/.branches
+/supabase/.temp
+
+# --- Local Session & Auth Backup (Jika ada sisa bot lama) ---
+baileys_auth_info/
+session/
