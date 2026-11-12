@@ -2,7 +2,6 @@ import { useRef, useState, useCallback, useEffect } from 'react';
 import { Camera, MapPin, Loader2, CheckCircle, AlertTriangle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
-// PERBAIKAN: Hook Geolocation diintegrasikan ke sini agar mudah disetting Timeout & Anti Fake-GPS-nya
 function useGeolocationWithAntiMock() {
   const [location, setLocation] = useState<{
     latitude: number | null;
@@ -58,7 +57,7 @@ function useGeolocationWithAntiMock() {
   return location;
 }
 
-export default function AttendanceCheckIn({ session }: { session: any }) {
+export default function AttendanceCheckIn({ session: _session }: { session?: any }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -69,9 +68,6 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  // ==========================================
-  // FITUR BARU: STATE UNTUK MODE HADIR / PULANG
-  // ==========================================
   const [attendanceMode, setAttendanceMode] = useState<'loading' | 'hadir' | 'pulang' | 'selesai'>('loading');
   const [activeRecordId, setActiveRecordId] = useState<string | null>(null);
 
@@ -84,7 +80,7 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
         const today = new Date().toISOString().split('T')[0];
 
         // Cek data absen terakhir karyawan ini
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from('attendance_records')
           .select('id, date, check_in, check_out')
           .eq('employee_id', user.id)
@@ -92,14 +88,13 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
           .limit(1)
           .single();
 
-        if (data) {
-          if (!data.check_out) {
-            // Jika ada data tapi jam keluar masih kosong -> Mode Pulang
+        const record = data as any;
+        if (record) {
+          if (!record.check_out) {
             setAttendanceMode('pulang');
-            setActiveRecordId(data.id);
+            setActiveRecordId(record.id);
           } else {
-            // Jika sudah ada jam keluar, cek apakah itu absen hari ini
-            if (data.date === today) {
+            if (record.date === today) {
               setAttendanceMode('selesai');
             } else {
               setAttendanceMode('hadir');
@@ -108,13 +103,12 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
         } else {
           setAttendanceMode('hadir');
         }
-      } catch (error) {
-        setAttendanceMode('hadir'); // Fallback jika error/data belum ada
+      } catch {
+        setAttendanceMode('hadir');
       }
     };
     checkAttendanceStatus();
   }, []);
-  // ==========================================
 
   const startCamera = async () => {
     try {
@@ -123,7 +117,7 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
         videoRef.current.srcObject = stream;
         setIsCameraActive(true);
       }
-    } catch (err) {
+    } catch {
       alert('Gagal mengakses kamera. Pastikan izin telah diberikan.');
     }
   };
@@ -161,25 +155,19 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
       return;
     }
 
-    // ==========================================
-    // FITUR BARU: VALIDASI JAM KEHADIRAN & PULANG
-    // ==========================================
     const currentHour = new Date().getHours();
     
     if (attendanceMode === 'hadir') {
-      // Hadir: Boleh dari 06:00 sampai 09:59
       if (currentHour < 6 || currentHour > 9) {
         alert('❌ GAGAL: Waktu Absen Hadir hanya diperbolehkan mulai pukul 06:00 hingga 09:59 pagi.');
         return;
       }
     } else if (attendanceMode === 'pulang') {
-      // Pulang: Boleh dari 17:00 sampai 06:59 (besok paginya)
       if (currentHour > 6 && currentHour < 17) {
         alert('❌ GAGAL: Waktu Absen Pulang hanya diperbolehkan mulai pukul 17:00 sore hingga 06:59 pagi.');
         return;
       }
     }
-    // ==========================================
 
     setLoading(true);
     try {
@@ -201,7 +189,6 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
 
       // 2. Simpan atau Update ke database tergantung Mode
       if (attendanceMode === 'hadir') {
-        // INSERT (Membuat Data Baru untuk Absen Datang)
         const { error: dbError } = await supabase
           .from('attendance_records')
           .insert({
@@ -218,13 +205,10 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
         if (dbError) throw dbError;
 
       } else if (attendanceMode === 'pulang') {
-        // UPDATE (Memperbarui Data Tadi Pagi dengan Jam Pulang)
         const { error: dbError } = await supabase
           .from('attendance_records')
           .update({
             check_out: new Date().toISOString(),
-            // Opsional: Jika tabel Anda punya kolom foto pulang, bisa dibuka komentar di bawah
-            // photo_out_url: uploadData.path, 
           })
           .eq('id', activeRecordId);
 
@@ -234,11 +218,10 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
       // 3. Notifikasi WhatsApp
       try {
         const { data: empData } = await supabase.from('employees').select('full_name').eq('id', realUserId).single();
-        const empName = empData?.full_name || 'Seorang Karyawan';
+        const empName = (empData as any)?.full_name || 'Seorang Karyawan';
 
         const noWhatsappHRD = "088227142563"; 
         
-        // Sesuaikan teks pesan WA dengan jenis absennya
         const statusTeks = attendanceMode === 'hadir' ? 'Check-In (Hadir)' : 'Check-Out (Pulang)';
         const pesanWA = `🚨 *NOTIFIKASI ABSENSI MASUK* 🚨\n\nNama: *${empName}*\nWaktu: ${new Date().toLocaleString('id-ID')}\nStatus: Berhasil ${statusTeks}.\n\nSilakan cek Dashboard HRD untuk melihat foto dan lokasi absensi.`;
 
@@ -259,7 +242,6 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
 
       setSuccess(true);
     } catch (error: any) {
-      // Penanganan Duplicate Constraint (Jika user menekan tombol berkali-kali)
       if (error.code === '23505' || error.message?.includes('duplicate key')) {
         alert('Anda sudah melakukan absensi untuk sesi ini.');
       } else {
@@ -270,7 +252,6 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
     }
   };
 
-  // Tampilan Jika Sedang Memuat Status Absen Awal
   if (attendanceMode === 'loading') {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] space-y-4 text-center">
@@ -280,7 +261,6 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
     );
   }
 
-  // Tampilan Jika Sudah Absen Keduanya (Hadir & Pulang) Hari Ini
   if (attendanceMode === 'selesai' || success) {
     return (
       <div className="flex flex-col items-center justify-center h-full space-y-4 p-8 text-center bg-surface rounded-2xl shadow-soft">
@@ -300,7 +280,6 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
   return (
     <div className="max-w-md mx-auto bg-surface rounded-3xl p-6 shadow-soft pb-24">
       <div className="text-center mb-6">
-        {/* Teks Judul Menyesuaikan Mode */}
         <h2 className="text-2xl font-bold text-gray-800">
           {attendanceMode === 'hadir' ? 'Absensi Hadir' : 'Absensi Pulang'}
         </h2>
@@ -345,7 +324,6 @@ export default function AttendanceCheckIn({ session }: { session: any }) {
             )}
           </>
         )}
-        {/* Hidden Canvas untuk merender gambar dari Video */}
         <canvas ref={canvasRef} className="hidden" />
       </div>
 

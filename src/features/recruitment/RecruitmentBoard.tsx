@@ -1,23 +1,21 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { 
-  FileSearch, UserPlus, CheckCircle, Clock, 
+  CheckCircle, Clock, 
   MessageCircle, XCircle, Link as LinkIcon, 
-  MoreVertical, UploadCloud, Cpu, Sparkles, Building2, User
+  UploadCloud, Cpu, Sparkles, Building2
 } from 'lucide-react';
 
 export default function RecruitmentBoard() {
   const [candidates, setCandidates] = useState<any[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   
-  // State untuk form tambah kandidat
   const [newCandidate, setNewCandidate] = useState({
     full_name: '', email: '', phone: '', position: '', expected_keywords: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    // Real-time subscription
     const channel = supabase.channel('candidates_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'candidates' }, () => {
         fetchCandidates();
@@ -33,7 +31,6 @@ export default function RecruitmentBoard() {
     if (data) setCandidates(data);
   };
 
-  // 1. Fungsi Simulasi AI Screening (Mencocokkan Keyword)
   const simulateScreening = async (candidateId: string) => {
     const mockScore = Math.floor(Math.random() * (100 - 40 + 1)) + 40; 
     
@@ -49,7 +46,6 @@ export default function RecruitmentBoard() {
     await supabase.from('candidates').update({ stage: newStage }).eq('id', candidateId);
   };
 
-  // 2. Fungsi Pindah Status (Hire / Tolak)
   const updateCandidateStage = async (id: string, stage: string) => {
     const confirmMsg = stage === 'hired' ? 'Apakah Anda yakin ingin MENERIMA kandidat ini?' : 'Tolak kandidat ini?';
     if (!window.confirm(confirmMsg)) return;
@@ -57,27 +53,22 @@ export default function RecruitmentBoard() {
     await supabase.from('candidates').update({ stage }).eq('id', id);
   };
 
-  // 3. Fungsi Chat WhatsApp
   const openWhatsApp = (phone: string, name: string) => {
     if (!phone) {
       alert('Kandidat ini belum mencantumkan nomor HP.');
       return;
     }
-    // Ubah 08 menjadi 628
     const formattedPhone = phone.startsWith('0') ? '62' + phone.substring(1) : phone;
     const text = encodeURIComponent(`Halo ${name}, kami dari HRD PT Rama Cinta Sejati. Mengenai lamaran kerja Anda...`);
     window.open(`https://wa.me/${formattedPhone}?text=${text}`, '_blank');
   };
 
-  // 4. Copy URL Pendaftaran
   const copyFormLink = () => {
-    // Anggap Anda akan membuat halaman rute /apply nanti
     const url = window.location.origin + '/apply';
     navigator.clipboard.writeText(url);
     alert('Link Formulir Pendaftaran berhasil disalin!\n\n' + url + '\n\nSilakan bagikan link ini ke sosmed atau pelamar.');
   };
 
-  // 5. Tambah Kandidat Manual
   const handleAddCandidate = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -104,8 +95,6 @@ export default function RecruitmentBoard() {
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12 flex flex-col h-[calc(100vh-100px)]">
-      
-      {/* Header Premium */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-white p-6 rounded-3xl shadow-sm border border-gray-100 mb-6 shrink-0">
         <div>
           <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
@@ -124,11 +113,8 @@ export default function RecruitmentBoard() {
         </div>
       </div>
 
-      {/* KANBAN BOARD AREA */}
       <div className="flex-1 overflow-x-auto pb-4">
         <div className="flex gap-6 min-w-max h-full items-start px-1">
-          
-          {/* KOLOM 1: LAMARAN BARU */}
           <div className="w-80 flex flex-col bg-gray-50/80 rounded-2xl border border-gray-200/60 h-full max-h-full">
             <div className="p-4 border-b border-gray-200/60 bg-gray-100/50 rounded-t-2xl">
               <h3 className="font-bold text-gray-700 flex items-center gap-2">
@@ -155,7 +141,6 @@ export default function RecruitmentBoard() {
             </div>
           </div>
 
-          {/* KOLOM 2: LOLOS SCREENING */}
           <div className="w-80 flex flex-col bg-amber-50/40 rounded-2xl border border-amber-100 h-full max-h-full">
             <div className="p-4 border-b border-amber-100 bg-amber-50/60 rounded-t-2xl">
               <h3 className="font-bold text-amber-800 flex items-center gap-2">
@@ -183,7 +168,6 @@ export default function RecruitmentBoard() {
                     </div>
                   )}
                   
-                  {/* Tombol Aksi Lanjutan */}
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <button onClick={() => updateCandidateStage(cand.id, 'hired')} className="flex items-center justify-center gap-1.5 bg-emerald-50 hover:bg-emerald-500 hover:text-white text-emerald-600 border border-emerald-100 text-[11px] py-1.5 rounded-lg font-bold transition-colors">
                       <CheckCircle size={12} /> Hire
@@ -201,7 +185,6 @@ export default function RecruitmentBoard() {
             </div>
           </div>
 
-          {/* KOLOM 3: DITERIMA (HIRED) */}
           <div className="w-80 flex flex-col bg-emerald-50/40 rounded-2xl border border-emerald-100 h-full max-h-full">
             <div className="p-4 border-b border-emerald-100 bg-emerald-50/60 rounded-t-2xl">
               <h3 className="font-bold text-emerald-800 flex items-center gap-2">
@@ -222,7 +205,6 @@ export default function RecruitmentBoard() {
             </div>
           </div>
 
-          {/* KOLOM 4: DITOLAK */}
           <div className="w-80 flex flex-col bg-red-50/40 rounded-2xl border border-red-100 h-full max-h-full">
             <div className="p-4 border-b border-red-100 bg-red-50/60 rounded-t-2xl">
               <h3 className="font-bold text-red-800 flex items-center gap-2">
@@ -241,11 +223,9 @@ export default function RecruitmentBoard() {
               ))}
             </div>
           </div>
-
         </div>
       </div>
 
-      {/* MODAL TAMBAH KANDIDAT & UPLOAD CV */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
           <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
@@ -288,7 +268,6 @@ export default function RecruitmentBoard() {
                   <UploadCloud size={32} className="mb-2 text-blue-500" />
                   <p className="text-sm font-semibold">Klik untuk memilih file CV</p>
                   <p className="text-xs">Maksimal 5MB (PDF)</p>
-                  {/* File input (hanya visual UI untuk MVP) */}
                   <input type="file" accept=".pdf" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                 </div>
               </div>
@@ -307,7 +286,6 @@ export default function RecruitmentBoard() {
           </div>
         </div>
       )}
-
     </div>
   );
 }

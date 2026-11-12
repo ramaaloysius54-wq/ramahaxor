@@ -2,28 +2,20 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { useNavigate, Link, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { createClient } from '@supabase/supabase-js'; 
 import { User, CreditCard, Building2, Wallet, Save, Loader2, ArrowLeft, Hash, Mail, Lock, ShieldCheck, Calendar } from 'lucide-react';
 
-// Zod Schema dengan penyesuaian email/password menjadi opsional saat Edit
 const employeeSchema = z.object({
-  // Data Pribadi & Pekerjaan
   full_name: z.string().min(3, 'Nama minimal 3 karakter'),
   nik: z.string().min(5, 'NIK wajib diisi'),
   position: z.string().min(2, 'Jabatan wajib diisi'),
   employment_type: z.string().min(1, 'Status karyawan wajib dipilih'),
   joined_at: z.string().min(1, 'Tanggal bergabung wajib diisi'),
-  
-  // Menggunakan z.coerce.number() agar aman dari input bertipe teks
   base_salary: z.coerce.number().min(1000000, 'Gaji pokok minimal Rp 1.000.000'),
-  
-  // Data Rekening
   bank_name: z.string().min(2, 'Nama Bank wajib diisi'),
   bank_account_number: z.string().min(5, 'Nomor Rekening wajib diisi'),
-  
-  // Data Login Baru (Dibuat opsional agar tidak memblokir saat Edit Mode)
   email: z.string().email('Format email tidak valid').optional().or(z.literal('')),
   password: z.string().min(6, 'Password minimal 6 karakter').optional().or(z.literal('')),
 });
@@ -32,33 +24,29 @@ type EmployeeFormData = z.infer<typeof employeeSchema>;
 
 export default function EmployeeForm() {
   const navigate = useNavigate();
-  const { id } = useParams(); // Mendeteksi apakah ada ID di URL
+  const { id } = useParams();
   const isEditMode = !!id;
 
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-    const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<EmployeeFormData>({
+  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<EmployeeFormData>({
     resolver: zodResolver(employeeSchema) as any,
   });
 
-  // Memantau nilai gaji pokok untuk keperluan format tampilan
   const baseSalaryValue = watch('base_salary');
 
-  // --- FUNGSI FORMAT ANGKA BERTITIK ---
   const formatRp = (num: number) => new Intl.NumberFormat('id-ID').format(num);
 
   const parseRp = (value: string) => {
-    const parsed = Number(value.replace(/\D/g, '')); // Hapus titik dan karakter non-angka
+    const parsed = Number(value.replace(/\D/g, ''));
     return isNaN(parsed) ? 0 : parsed;
   };
 
-  // Mengambil data lama jika dalam mode Edit
   useEffect(() => {
     if (isEditMode) {
       const fetchEmployeeData = async () => {
         try {
-          // 1. Ambil data karyawan
           const { data: empData, error: empError } = await supabase
             .from('employees')
             .select('*')
@@ -67,7 +55,6 @@ export default function EmployeeForm() {
             
           if (empError) throw empError;
           
-          // 2. Ambil data email dari profiles
           let emailLama = '';
           if (empData) {
             const { data: profileData } = await supabase
@@ -76,22 +63,22 @@ export default function EmployeeForm() {
               .eq('id', id)
               .single();
               
-            if (profileData && profileData.email) {
-              emailLama = profileData.email;
+            if (profileData && (profileData as any).email) {
+              emailLama = (profileData as any).email;
             }
           }
           
           if (empData) {
-            // Mengisi form dengan data lama menggunakan reset()
+            const emp = empData as any;
             reset({
-              full_name: empData.full_name || '',
-              nik: empData.nik || '',
-              position: empData.position || '',
-              employment_type: empData.employment_type || '',
-              joined_at: empData.joined_at || '',
-              base_salary: empData.base_salary || 0,
-              bank_name: empData.bank_name || '',
-              bank_account_number: empData.bank_account_number || '',
+              full_name: emp.full_name || '',
+              nik: emp.nik || '',
+              position: emp.position || '',
+              employment_type: emp.employment_type || '',
+              joined_at: emp.joined_at || '',
+              base_salary: emp.base_salary || 0,
+              bank_name: emp.bank_name || '',
+              bank_account_number: emp.bank_account_number || '',
               email: emailLama, 
               password: '' 
             });
@@ -110,7 +97,6 @@ export default function EmployeeForm() {
     
     try {
       if (isEditMode) {
-        // --- PROSES UPDATE DATA KARYAWAN ---
         const { error: updateError } = await supabase
           .from('employees')
           .update({
@@ -130,7 +116,6 @@ export default function EmployeeForm() {
         navigate('/hrd/employees');
 
       } else {
-        // --- PROSES TAMBAH BARU ---
         if (!data.email || !data.password) {
           throw new Error('Email dan password wajib diisi untuk karyawan baru.');
         }
@@ -190,8 +175,6 @@ export default function EmployeeForm() {
 
   return (
     <div className="max-w-3xl mx-auto pb-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      
-      {/* Header */}
       <div className="flex items-center gap-4 mb-6">
         <button onClick={() => navigate(-1)} className="p-2 bg-white rounded-xl shadow-sm border border-gray-100 text-gray-500 hover:text-primary-600 transition-colors">
           <ArrowLeft size={20} />
@@ -209,8 +192,6 @@ export default function EmployeeForm() {
       )}
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        
-        {/* CARD 1: AKUN LOGIN (Disembunyikan jika dalam mode Edit demi keamanan) */}
         {!isEditMode && (
           <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-gray-100 space-y-6 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
@@ -240,7 +221,6 @@ export default function EmployeeForm() {
           </div>
         )}
 
-        {/* CARD 2: DATA PEKERJAAN */}
         <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-gray-100 space-y-6">
           <h3 className="text-lg font-bold text-gray-900 border-b border-gray-50 pb-3 flex items-center gap-2">
             <User className="text-primary-500" size={20} /> Data Personal & Jabatan
@@ -274,7 +254,6 @@ export default function EmployeeForm() {
               {errors.position && <span className="text-xs text-rose-500 mt-1 block">{errors.position.message}</span>}
             </div>
 
-            {/* Input Tanggal Bergabung */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Tanggal Bergabung</label>
               <div className="relative">
@@ -295,18 +274,11 @@ export default function EmployeeForm() {
               {errors.employment_type && <span className="text-xs text-rose-500 mt-1 block">{errors.employment_type.message}</span>}
             </div>
 
-            {/* ======================================================== */}
-            {/* PERBAIKAN BUG NaN: Memisahkan data visual dan data murni */}
-            {/* ======================================================== */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">Gaji Pokok (Rp)</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400"><Wallet size={18} /></div>
-                
-                {/* 1. INPUT TERSEMBUNYI (Dibaca oleh Zod) */}
                 <input type="hidden" {...register('base_salary')} />
-                
-                {/* 2. INPUT VISUAL (Tanpa register, hanya untuk user mengetik angka bertitik) */}
                 <input 
                   type="text" 
                   value={!baseSalaryValue ? '' : formatRp(baseSalaryValue)}
@@ -320,12 +292,9 @@ export default function EmployeeForm() {
               </div>
               {errors.base_salary && <span className="text-xs text-rose-500 mt-1 block">{errors.base_salary.message}</span>}
             </div>
-            {/* ======================================================== */}
-
           </div>
         </div>
 
-        {/* CARD 3: REKENING */}
         <div className="bg-white p-6 sm:p-8 rounded-[2rem] shadow-sm border border-gray-100 space-y-6">
           <h3 className="text-lg font-bold text-gray-900 border-b border-gray-50 pb-3 flex items-center gap-2">
             <CreditCard className="text-primary-500" size={20} /> Rekening Gaji
@@ -346,7 +315,6 @@ export default function EmployeeForm() {
           </div>
         </div>
 
-        {/* TOMBOL SIMPAN */}
         <div className="flex justify-end pt-2">
           <button 
             type="submit" 
@@ -357,7 +325,6 @@ export default function EmployeeForm() {
             {loading ? 'Memproses...' : (isEditMode ? 'Simpan Perubahan' : 'Simpan & Buat Akun')}
           </button>
         </div>
-
       </form>
     </div>
   );

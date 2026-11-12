@@ -14,7 +14,8 @@ const leaveSchema = z.object({
 
 type LeaveFormData = z.infer<typeof leaveSchema>;
 
-export default function LeaveRequestForm({ session }: { session: any }) {
+export default function LeaveRequestForm({ session: _session }: { session?: any }) {
+
   const [file, setFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { register, handleSubmit, formState: { errors }, reset } = useForm<LeaveFormData>({

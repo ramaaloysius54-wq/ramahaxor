@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase'; // Sesuaikan path jika berbeda
+import { supabase } from '../../lib/supabase';
 import { 
-  Search, Edit, Key, Shield, User, X, Loader2, Save, Mail, FileText
+  Search, Edit, Key, Shield, User, X, Loader2, Save, FileText
 } from 'lucide-react';
 
 export default function ManageAccounts() {
@@ -23,16 +23,16 @@ export default function ManageAccounts() {
 
   const fetchEmployees = async () => {
     setLoading(true);
-    // Mengambil data karyawan (Anda bisa menambahkan join ke tabel profil/auth jika ada relasinya)
     const { data, error } = await supabase
       .from('employees')
       .select('id, full_name, nik, avatar_url, is_active')
       .order('full_name', { ascending: true });
-    
+
+    if (error) console.error('Gagal memuat karyawan:', error.message);
     if (data) setEmployees(data);
     setLoading(false);
   };
-
+  
   useEffect(() => {
     fetchEmployees();
   }, []);
@@ -42,7 +42,7 @@ export default function ManageAccounts() {
     setFormData({
       full_name: emp.full_name || '',
       nik: emp.nik || '',
-      new_password: '' // Kosongkan password secara default
+      new_password: ''
     });
     setIsModalOpen(true);
   };
@@ -65,26 +65,15 @@ export default function ManageAccounts() {
 
       // 2. Update Password (Hanya dieksekusi jika field password diisi)
       if (formData.new_password.trim() !== '') {
-        // CATATAN: Untuk update password user lain, Supabase mewajibkan pemanggilan via Admin API (Service Role) 
-        // atau edge functions. Jika Anda menggunakan supabase.auth.updateUser, itu hanya berlaku untuk user yang sedang login.
-        // Di sini kita asumsikan Anda memiliki sistem backend/fungsi khusus, atau ini hanya UI sementara:
-        
         alert(`INFO: Memperbarui password untuk ${formData.full_name} membutuhkan otorisasi Admin Supabase (Service Role Key).`);
-        
-        /* Contoh jika menggunakan endpoint / backend buatan sendiri:
-         await fetch('/api/update-user', {
-           method: 'POST',
-           body: JSON.stringify({ userId: selectedEmp.id, password: formData.new_password })
-         })
-        */
       }
 
       alert('Data akun berhasil diperbarui!');
       setIsModalOpen(false);
-      fetchEmployees(); // Refresh tabel
+      fetchEmployees();
 
-    } catch (error: any) {
-      alert('Gagal menyimpan: ' + error.message);
+    } catch (err: any) {
+      alert('Gagal menyimpan: ' + err.message);
     } finally {
       setIsSaving(false);
     }
@@ -243,7 +232,7 @@ export default function ManageAccounts() {
                 <div className="relative">
                   <Key size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input 
-                    type="text" // Type text agar HRD bisa lihat password yang diketik
+                    type="text"
                     placeholder="Masukkan password baru..."
                     value={formData.new_password}
                     onChange={(e) => setFormData({...formData, new_password: e.target.value})}

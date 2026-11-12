@@ -4,12 +4,11 @@ import {
   Users, FileText, UserPlus, TrendingUp, 
   ArrowRight, Building, CalendarCheck, 
   Sparkles, Activity, Clock, BellRing, ChevronRight,
-  UserCheck, Briefcase, UserMinus, Key, AlertOctagon,
+  UserCheck, Key, AlertOctagon,
   LogIn, LogOut
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-// IMPORT UNTUK GRAFIK
 import { 
   PieChart, Pie, Cell, BarChart, Bar, 
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
@@ -30,9 +29,8 @@ export default function HRDashboard() {
 
   useEffect(() => {
     const fetchStats = async () => {
-      // Ambil tanggal hari ini versi UTC dan versi Lokal (WIB) agar absen jam 6 pagi tetap terbaca
       const utcDate = new Date().toISOString().split('T')[0];
-      const localDate = new Date().toLocaleDateString('en-CA'); // Format YYYY-MM-DD sesuai jam perangkat
+      const localDate = new Date().toLocaleDateString('en-CA');
 
       const { count: empCount } = await supabase.from('employees').select('*', { count: 'exact', head: true });
       const { count: leaveCount } = await supabase.from('leave_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending');
@@ -42,7 +40,7 @@ export default function HRDashboard() {
       
       let tetap = 0; let kontrak = 0; let keluar = 0;
       if (empData && empData.length > 0) {
-        empData.forEach((emp) => {
+        empData.forEach((emp: any) => {
           const type = (emp.employment_type || '').toLowerCase();
           
           if (emp.is_active === false || emp.status === 'inactive') {
@@ -60,7 +58,6 @@ export default function HRDashboard() {
         });
       }
 
-      // PERBAIKAN: Gunakan select('*') agar tidak error jika skema kolom sedang diupdate
       const { data: attData } = await supabase
         .from('attendance_records')
         .select('*')
@@ -71,7 +68,6 @@ export default function HRDashboard() {
       let masihBekerja = 0;
 
       if (attData && attData.length > 0) {
-        // Filter agar hanya menghitung absen yang terjadi di hari ini (WIB)
         const todayRecords = attData.filter((record: any) => {
           if (!record.check_in) return record.date === localDate || record.date === utcDate;
           const checkInLocalDate = new Date(record.check_in).toLocaleDateString('en-CA');
@@ -98,7 +94,6 @@ export default function HRDashboard() {
     
     fetchStats();
 
-    // 1. Real-time WebSocket dari Supabase
     const subscription = supabase
       .channel('realtime-hr-dashboard-live')
       .on(
@@ -113,7 +108,6 @@ export default function HRDashboard() {
       )
       .subscribe();
 
-    // 2. Fallback Auto-Sync setiap 4 detik (Memastikan 100% Real-Time tanpa perlu refresh)
     const interval = setInterval(() => {
       fetchStats();
     }, 4000);
@@ -136,13 +130,8 @@ export default function HRDashboard() {
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
-      
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-        
-        {/* KOLOM KIRI (Konten Utama) */}
         <div className="lg:col-span-2 space-y-6 lg:space-y-8">
-          
-          {/* Welcome Banner */}
           <div className="relative overflow-hidden bg-gradient-to-br from-indigo-900 via-indigo-800 to-blue-700 rounded-[2rem] p-8 sm:p-10 text-white shadow-2xl shadow-indigo-900/20 border border-white/10">
             <div className="relative z-10">
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-xs font-semibold text-indigo-100 mb-6">
@@ -156,14 +145,11 @@ export default function HRDashboard() {
                 Pantau kehadiran, kelola cuti, rekrutmen, dan eksekusi penggajian massal karyawan dalam satu sentuhan.
               </p>
             </div>
-            
             <div className="absolute -top-24 -right-24 w-80 h-80 bg-gradient-to-br from-blue-400 to-indigo-500 opacity-20 rounded-full blur-3xl pointer-events-none"></div>
             <div className="absolute bottom-0 right-10 w-40 h-40 bg-purple-400 opacity-20 rounded-full blur-2xl pointer-events-none"></div>
           </div>
 
-          {/* Kartu Statistik */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6">
-            
             <div className="bg-white p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-gray-100 hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] transition-all group">
               <div className="flex justify-between items-start mb-5">
                 <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
@@ -210,17 +196,13 @@ export default function HRDashboard() {
                 <p className="text-3xl font-extrabold text-gray-900">{stats.activeCandidates}</p>
               </div>
             </div>
-
           </div>
 
-          {/* Navigasi Cepat (Quick Actions) */}
           <div>
             <div className="flex items-center justify-between mb-4 px-2">
               <h3 className="text-lg font-bold text-gray-900">Akses Cepat</h3>
             </div>
-            
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              
               <Link to="/hrd/employees/new" className="group flex items-center justify-between p-5 bg-white rounded-[1.5rem] shadow-sm border border-gray-100 hover:border-blue-300 hover:shadow-md transition-all overflow-hidden relative">
                 <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-blue-50 to-transparent rounded-full -mr-8 -mt-8 pointer-events-none"></div>
                 <div className="flex items-center gap-4 relative z-10">
@@ -276,11 +258,9 @@ export default function HRDashboard() {
                 </div>
                 <ChevronRight size={20} className="text-gray-300 group-hover:text-rose-600 group-hover:translate-x-1 transition-all relative z-10" />
               </Link>
-
             </div>
           </div>
 
-          {/* Area Grafik */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:gap-6 mt-8">
             <div className="bg-white p-6 rounded-3xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-gray-100 flex flex-col h-[350px]">
               <div className="flex items-center gap-3 mb-2">
@@ -329,14 +309,10 @@ export default function HRDashboard() {
                 </ResponsiveContainer>
               </div>
             </div>
-
           </div>
-
         </div>
 
-        {/* KOLOM KANAN (Widget Sidebar) */}
         <div className="space-y-6 lg:space-y-8 mt-6 lg:mt-0">
-          
           <div className="bg-white p-6 rounded-[2rem] shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-gray-100 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-full h-2 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
             <div className="flex items-center gap-3 mb-1">
@@ -346,7 +322,6 @@ export default function HRDashboard() {
             <p className="text-lg font-bold text-gray-900">{today}</p>
           </div>
 
-          {/* WIDGET PANTAUAN ABSENSI REAL-TIME */}
           <div className="bg-white p-6 rounded-[2rem] shadow-[0_4px_20px_rgb(0,0,0,0.03)] border border-gray-100">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-bold text-gray-900 flex items-center gap-2">
@@ -420,7 +395,6 @@ export default function HRDashboard() {
             </div>
 
             <div className="space-y-5 relative before:absolute before:inset-0 before:ml-[15px] before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-gray-200 before:via-gray-100 before:to-transparent">
-              
               <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
                 <div className="flex items-center justify-center w-8 h-8 rounded-full border-4 border-white bg-indigo-100 text-indigo-600 shadow shrink-0 z-10">
                   <BellRing size={12} />
@@ -459,16 +433,13 @@ export default function HRDashboard() {
                   </div>
                 </div>
               </div>
-
             </div>
             
             <Link to="/hrd/attendance" className="w-full mt-6 py-2.5 rounded-xl bg-gray-50 text-gray-600 text-xs font-bold hover:bg-gray-100 transition-colors flex items-center justify-center gap-1">
               Lihat Semua Laporan <ArrowRight size={14} />
             </Link>
           </div>
-
         </div>
-
       </div>
     </div>
   );

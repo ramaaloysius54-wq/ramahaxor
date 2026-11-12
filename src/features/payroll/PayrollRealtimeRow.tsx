@@ -10,7 +10,8 @@ interface PayrollRealtimeRowProps {
   onUpdateSuccess: () => void;
 }
 
-export default function PayrollRealtimeRow({ record, onUpdateSuccess }: PayrollRealtimeRowProps) {
+export default function PayrollRealtimeRow({ record, onUpdateSuccess: _onUpdateSuccess }: { record: any; onUpdateSuccess?: () => void }) {
+  
   const emp = record.employees;
   const WORK_DAYS = 22; // Asumsi hari kerja sebulan
 

@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { 
-  ReceiptText, Download, CalendarDays, Wallet, AlertCircle, Loader2, ArrowRight
+  ReceiptText, Download, CalendarDays, AlertCircle, Loader2, ArrowRight
 } from 'lucide-react';
 
 export default function EmployeePayslips() {
   const [payslips, setPayslips] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedPayslip, setSelectedPayslip] = useState<any>(null); // Untuk menampilkan pop-up struk
+  const [selectedPayslip, setSelectedPayslip] = useState<any>(null);
 
   useEffect(() => {
     async function fetchMyPayslips() {
@@ -16,7 +16,6 @@ export default function EmployeePayslips() {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        // Tarik data payroll karyawan tersebut yang berelasi dengan tabel periode (untuk dapat bulan/tahun)
         const { data, error } = await supabase
           .from('payroll_records')
           .select(`
@@ -24,7 +23,7 @@ export default function EmployeePayslips() {
             payroll_periods (month, year)
           `)
           .eq('employee_id', user.id)
-          .order('id', { ascending: false }); // Urutkan dari yang terbaru
+          .order('id', { ascending: false });
 
         if (error) throw error;
         setPayslips(data || []);
@@ -46,7 +45,6 @@ export default function EmployeePayslips() {
     return date.toLocaleString('id-ID', { month: 'long' });
   };
 
-  // Fungsi untuk fitur cetak (Print) struk slip gaji
   const handlePrint = () => {
     window.print();
   };
@@ -54,7 +52,7 @@ export default function EmployeePayslips() {
   return (
     <div className="p-4 space-y-6 pb-24 max-w-md mx-auto relative animate-in fade-in duration-500">
       
-      {/* Header Premium (TIDAK IKUT TER-PRINT SAAT MENCETAK PDF) */}
+      {/* Header Premium */}
       <div className="bg-gradient-to-br from-gray-900 to-indigo-900 text-white p-6 rounded-[2rem] shadow-xl relative overflow-hidden print:hidden">
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-4">
@@ -66,7 +64,6 @@ export default function EmployeePayslips() {
           <p className="text-sm text-indigo-200 font-medium">Rekapitulasi penerimaan penghasilan dan potongan bulanan Anda.</p>
         </div>
         
-        {/* Dekorasi Background */}
         <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500 rounded-full blur-3xl opacity-20 -mr-10 -mt-10"></div>
         <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500 rounded-full blur-3xl opacity-20 -ml-10 -mb-10"></div>
       </div>
@@ -119,12 +116,11 @@ export default function EmployeePayslips() {
         )}
       </div>
 
-      {/* POP-UP DETAIL SLIP GAJI (YANG AKAN DI-PRINT) */}
+      {/* POP-UP DETAIL SLIP GAJI */}
       {selectedPayslip && (
         <div className="fixed inset-0 z-[100] bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 print:p-0 print:bg-white animate-in fade-in">
           <div className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl relative flex flex-col max-h-[90vh] print:max-h-full print:shadow-none print:rounded-none">
             
-            {/* Header Pop-up (Tombol Tutup & Print) */}
             <div className="bg-gray-50 p-4 border-b border-gray-100 flex justify-between items-center print:hidden shrink-0">
               <button onClick={() => setSelectedPayslip(null)} className="px-4 py-1.5 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-200 transition-colors">
                 Tutup
@@ -134,16 +130,13 @@ export default function EmployeePayslips() {
               </button>
             </div>
 
-            {/* AREA CETAK STRUK SLIP GAJI (Scrollable di HP, Full di Kertas Print) */}
             <div className="p-6 sm:p-8 overflow-y-auto font-mono text-xs text-gray-700 print:text-black print:overflow-visible">
               
-              {/* Logo & Judul Perusahaan */}
               <div className="text-center mb-6 border-b-2 border-black pb-4">
                 <h2 className="text-xl font-bold uppercase mb-1">STRUK GAJI KARYAWAN</h2>
                 <p className="font-semibold">PERIODE: {getMonthName(selectedPayslip.payroll_periods?.month).toUpperCase()} {selectedPayslip.payroll_periods?.year}</p>
               </div>
 
-              {/* Rincian Penghasilan (Pendapatan) */}
               <div className="mb-4">
                 <h3 className="font-bold border-b border-dashed border-gray-400 pb-1 mb-2 uppercase">I. PENERIMAAN (Pemasukan)</h3>
                 <div className="space-y-1.5 pl-1">
@@ -161,7 +154,6 @@ export default function EmployeePayslips() {
                 </div>
               </div>
 
-              {/* Rincian Potongan */}
               <div className="mb-6">
                 <h3 className="font-bold border-b border-dashed border-gray-400 pb-1 mb-2 uppercase">II. PEMOTONGAN</h3>
                 <div className="space-y-1.5 pl-1">
@@ -184,7 +176,6 @@ export default function EmployeePayslips() {
                 </div>
               </div>
 
-              {/* Take Home Pay Final */}
               <div className="bg-gray-100 border-2 border-black p-4 text-center">
                 <p className="font-bold uppercase tracking-wider mb-1">TOTAL TAKE HOME PAY</p>
                 <p className="text-xl sm:text-2xl font-extrabold">{formatRp(selectedPayslip.net_salary)}</p>

@@ -2,10 +2,8 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import PayrollRealtimeRow from './PayrollRealtimeRow';
 import { 
-  FileSpreadsheet, 
   Calculator, 
   CreditCard, 
-  Download, 
   Search, 
   Clock, 
   Radio 
@@ -29,11 +27,12 @@ export default function PayrollDashboard() {
       .eq('year', selectedYear)
       .maybeSingle();
 
-    if (periodData) {
+    const period = periodData as any;
+    if (period) {
       const { data: records } = await supabase
         .from('payroll_records')
         .select('*, employees(full_name, nik, position, bank_name, bank_account_number, base_salary)')
-        .eq('period_id', periodData.id);
+        .eq('period_id', period.id);
       setPayrolls(records || []);
     } else {
       setPayrolls([]);
@@ -44,16 +43,12 @@ export default function PayrollDashboard() {
   useEffect(() => {
     fetchPayroll();
 
-    // Supabase Realtime Listener (WebSocket)
     const channel = supabase
       .channel('realtime_payroll_sync')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'payroll_records' },
-        () => {
-          // Ketika ada row yang update (misalnya by trigger trigger supabase atau client lain)
-          // kita fetch ulang ringan jika perlu. Namun kalkulasi sudah ada di PayrollRealtimeRow.
-        }
+        () => {}
       )
       .subscribe();
 
@@ -62,7 +57,6 @@ export default function PayrollDashboard() {
     };
   }, [selectedMonth, selectedYear]);
 
-  // Bulk Processor untuk inisialisasi awal periode
   const generateBulkPayroll = async () => {
     if (!confirm('Inisialisasi draf penggajian untuk periode ini? Data baru akan ditambahkan.')) return;
     setIsGenerating(true);
@@ -77,7 +71,7 @@ export default function PayrollDashboard() {
         .maybeSingle();
 
       if (existingPeriod) {
-        periodId = existingPeriod.id;
+        periodId = (existingPeriod as any).id;
       } else {
         const { data: newPeriod, error: pErr } = await supabase
           .from('payroll_periods')
@@ -85,7 +79,7 @@ export default function PayrollDashboard() {
           .select('id')
           .single();
         if (pErr) throw pErr;
-        periodId = newPeriod.id;
+        periodId = (newPeriod as any).id;
       }
 
       const { data: employees } = await supabase
@@ -95,8 +89,7 @@ export default function PayrollDashboard() {
 
       if (!employees || employees.length === 0) throw new Error('Data karyawan tidak ditemukan.');
 
-      // Inisialisasi draft, belum dikalkulasi penuh (Kalkulasi realtime ada di Row)
-      const initialDrafts = employees.map((emp) => {
+      const initialDrafts = (employees as any[]).map((emp) => {
         const base = Number(emp.base_salary) || 0;
         return {
           period_id: periodId,
@@ -112,15 +105,6 @@ export default function PayrollDashboard() {
           total_deduction: 0,
           net_salary: base,
           is_paid: false,
-          // Tambahan field untuk form baru (Pastikan field ini sudah ada di schema database Anda, 
-          // jika belum, tambahkan tipe json atau update schema Anda)
-          // Kita akan simpan data sementara di client state Row jika field DB belum siap, 
-          // tapi idealnya kolom-kolom ini ada di table payroll_records:
-          // overtime_hours: 0,
-          // overtime_rate: 20000,
-          // performance_allowance: 0,
-          // sick_days: 0,
-          // daily_rate: Math.round(base / 22), 
         };
       });
 
