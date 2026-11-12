@@ -38,8 +38,8 @@ export default function EmployeeForm() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<EmployeeFormData>({
-    resolver: zodResolver(employeeSchema),
+    const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<EmployeeFormData>({
+    resolver: zodResolver(employeeSchema) as any,
   });
 
   // Memantau nilai gaji pokok untuk keperluan format tampilan

@@ -1,8 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-// Tambahkan kata "type" sebelum { Database }
-import type { Database } from '../types/supabase';
 
-const supabaseUrl = 'https://wmauyurhlwodusqnbkcv.supabase.co';
-const supabaseAnonKey = 'sb_publishable_eZ7Tdo4P-oW10lvImVUJbA_QJlYNNke';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
