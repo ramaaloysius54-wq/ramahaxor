@@ -24,7 +24,7 @@ jobs:
           npm ci
           npm run build
 
-      - name: 🚀 Sync & Restart di VPS (/var/www/hrd)
+      - name: 🚀 Sync & Build di VPS (/var/www/hrd)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -43,16 +43,121 @@ jobs:
             -e "ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198" \
             ./ "$VPS_USER@$VPS_HOST:/var/www/hrd/"
           
-          echo "3. Install module, Build & Jalankan HRIS via PM2 di VPS..."
+          echo "3. Install module & Build HRIS di VPS..."
           sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198 "$VPS_USER@$VPS_HOST" << 'ENDSSH'
             export PATH=$PATH:/usr/local/bin:/usr/bin:~/.npm-global/bin
             cd /var/www/hrd
             
             npm ci
+            npm install serve --no-save
             npm run build
             
-            # Menjalankan hasil build React (folder dist) di port 3000 menggunakan PM2
             pm2 delete hris-web || true
-            pm2 serve dist 3000 --name "hris-web" --spa
             pm2 save
           ENDSSH
+
+      - name: ☸️ Deploy & Rollout Kubernetes (K3s) HRIS di VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          SSHPASS: ${{ secrets.VPS_PASSWORD }}
+        run: |
+          echo "4. Menjalankan Orkestrasi Pod & Ingress ramahaxor.my.id..."
+          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198 "$VPS_USER@$VPS_HOST" << 'ENDK8S'
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+            mkdir -p /var/www/k8s-hrd
+            cd /var/www/k8s-hrd
+
+            cat << 'EOF' > deployment.yaml
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: hris-web
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: hris-web
+            template:
+              metadata:
+                labels:
+                  app: hris-web
+              spec:
+                enableServiceLinks: false
+                containers:
+                - name: web
+                  image: node:20
+                  workingDir: /app
+                  command: ["sh", "-c", "./node_modules/.bin/serve -s dist -l 3000"]
+                  ports:
+                  - containerPort: 3000
+                  env:
+                  - name: HOSTNAME
+                    value: "0.0.0.0"
+                  - name: PORT
+                    value: "3000"
+                  volumeMounts:
+                  - name: hris-volume
+                    mountPath: /app
+                volumes:
+                - name: hris-volume
+                  hostPath:
+                    path: /var/www/hrd
+          EOF
+
+            cat << 'EOF' > service.yaml
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: hris-service
+          spec:
+            type: NodePort
+            selector:
+              app: hris-web
+            ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 3000
+                nodePort: 30081
+          EOF
+
+            cat << 'EOF' > ingress.yaml
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: hris-ingress
+            annotations:
+              ingress.kubernetes.io/ssl-redirect: "false"
+          spec:
+            rules:
+            - host: ramahaxor.my.id
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: hris-service
+                      port:
+                        number: 80
+            - host: www.ramahaxor.my.id
+              http:
+                paths:
+                - path: /
+                  pathType: Prefix
+                  backend:
+                    service:
+                      name: hris-service
+                      port:
+                        number: 80
+          EOF
+
+            kubectl apply -f deployment.yaml || (kubectl delete -f deployment.yaml && kubectl apply -f deployment.yaml)
+            kubectl apply -f service.yaml
+            kubectl apply -f ingress.yaml
+            kubectl rollout restart deployment/hris-web
+            sleep 5
+            kubectl get pods -l app=hris-web -o wide
+            kubectl get svc hris-service
+            kubectl get ingress hris-ingress
+          ENDK8S
