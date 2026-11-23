@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-and-deploy:
-    name: Deploy 
+    name: Deploy HRIS to Dedicated VPS
     runs-on: ubuntu-latest
 
     steps:
@@ -24,36 +24,43 @@ jobs:
           npm ci
           npm run build
 
-      - name: 🚀 Sync & Build di VPS (/var/www/hrd)
+      - name: 🚀 Sync & Build di VPS Dedicated (/var/www/hrd)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
+          PORT="${VPS_PORT:-22}"
           sudo apt-get update && sudo apt-get install -y sshpass rsync
-          
-          echo "1. Membuat folder /var/www/hrd di VPS jika belum ada..."
-          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198 "$VPS_USER@$VPS_HOST" "mkdir -p /var/www/hrd"
+
+          echo "1. Menyiapkan folder /var/www/hrd & memastikan rsync terpasang di VPS..."
+          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p "$PORT" "$VPS_USER@$VPS_HOST" \
+            "mkdir -p /var/www/hrd && (command -v rsync >/dev/null 2>&1 || (apt-get update -y && apt-get install -y rsync))"
 
           echo "2. Mengirim file website HRIS ke VPS..."
-          sshpass -e rsync -avz \
+          sshpass -e rsync -avz --delete \
             --exclude='.git' \
             --exclude='node_modules' \
+            --exclude='dist' \
             --exclude='.env' \
-            -e "ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198" \
+            -e "ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p $PORT" \
             ./ "$VPS_USER@$VPS_HOST:/var/www/hrd/"
-          
+
           echo "3. Install module & Build HRIS di VPS..."
-          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198 "$VPS_USER@$VPS_HOST" << 'ENDSSH'
-            export PATH=$PATH:/usr/local/bin:/usr/bin:~/.npm-global/bin
-            cd /var/www/hrd
-            
-            npm ci
-            npm install serve --no-save
-            npm run build
-            
+          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p "$PORT" "$VPS_USER@$VPS_HOST" << 'ENDSSH'
+          set -e
+          export PATH=$PATH:/usr/local/bin:/usr/bin:~/.npm-global/bin
+          cd /var/www/hrd
+
+          npm ci
+          npm install serve --no-save
+          npm run build
+
+          if command -v pm2 >/dev/null 2>&1; then
             pm2 delete hris-web || true
-            pm2 save
+            pm2 save || true
+          fi
           ENDSSH
 
       - name: ☸️ Deploy & Rollout Kubernetes (K3s) HRIS di VPS
@@ -61,14 +68,17 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           SSHPASS: ${{ secrets.VPS_PASSWORD }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
+          PORT="${VPS_PORT:-22}"
           echo "4. Menjalankan Orkestrasi Pod & Ingress ramahaxor.my.id..."
-          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p 20198 "$VPS_USER@$VPS_HOST" << 'ENDK8S'
-            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-            mkdir -p /var/www/k8s-hrd
-            cd /var/www/k8s-hrd
+          sshpass -e ssh -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -p "$PORT" "$VPS_USER@$VPS_HOST" << 'ENDK8S'
+          set -e
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          mkdir -p /var/www/k8s-hrd
+          cd /var/www/k8s-hrd
 
-            cat << 'EOF' > deployment.yaml
+          cat << 'EOF' > deployment.yaml
           apiVersion: apps/v1
           kind: Deployment
           metadata:
@@ -88,7 +98,7 @@ jobs:
                 - name: web
                   image: node:20
                   workingDir: /app
-                  command: ["sh", "-c", "./node_modules/.bin/serve -s dist -l 3000"]
+                  command: ["sh", "-c", "./node_modules/.bin/serve -s dist -l tcp://0.0.0.0:3000"]
                   ports:
                   - containerPort: 3000
                   env:
@@ -105,7 +115,7 @@ jobs:
                     path: /var/www/hrd
           EOF
 
-            cat << 'EOF' > service.yaml
+          cat << 'EOF' > service.yaml
           apiVersion: v1
           kind: Service
           metadata:
@@ -121,7 +131,7 @@ jobs:
                 nodePort: 30081
           EOF
 
-            cat << 'EOF' > ingress.yaml
+          cat << 'EOF' > ingress.yaml
           apiVersion: networking.k8s.io/v1
           kind: Ingress
           metadata:
@@ -129,6 +139,7 @@ jobs:
             annotations:
               ingress.kubernetes.io/ssl-redirect: "false"
           spec:
+            ingressClassName: traefik
             rules:
             - host: ramahaxor.my.id
               http:
@@ -152,12 +163,12 @@ jobs:
                         number: 80
           EOF
 
-            kubectl apply -f deployment.yaml || (kubectl delete -f deployment.yaml && kubectl apply -f deployment.yaml)
-            kubectl apply -f service.yaml
-            kubectl apply -f ingress.yaml
-            kubectl rollout restart deployment/hris-web
-            sleep 5
-            kubectl get pods -l app=hris-web -o wide
-            kubectl get svc hris-service
-            kubectl get ingress hris-ingress
+          kubectl apply -f deployment.yaml || (kubectl delete -f deployment.yaml && kubectl apply -f deployment.yaml)
+          kubectl apply -f service.yaml
+          kubectl apply -f ingress.yaml
+          kubectl rollout restart deployment/hris-web
+          kubectl rollout status deployment/hris-web --timeout=90s
+          kubectl get pods -l app=hris-web -o wide
+          kubectl get svc hris-service
+          kubectl get ingress hris-ingress
           ENDK8S
