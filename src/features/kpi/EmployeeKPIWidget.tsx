@@ -1,14 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
-import { Target, BellRing, Users } from 'lucide-react';
+import { Target, CheckCircle2, Clock } from 'lucide-react';
 
 export default function EmployeeKPIWidget() {
   const [score, setScore] = useState<number | null>(null);
-  const [expected, setExpected] = useState(80);
   const [totalKpi, setTotalKpi] = useState(0);
-  const [pendingTeamApprovals, setPendingTeamApprovals] = useState(0);
-  const [isManager, setIsManager] = useState(false);
+  const [ratedCount, setRatedCount] = useState(0);
+  const [waitingCount, setWaitingCount] = useState(0);
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -18,72 +17,31 @@ export default function EmployeeKPIWidget() {
       if (!user) return;
 
       const now = new Date();
-      const month = now.getMonth() + 1;
-      const year = now.getFullYear();
-
-      const { data: me } = await supabase
-        .from('employees')
-        .select('department, job_level, kpi_role')
-        .eq('id', user.id)
-        .single();
-
-      const mgr =
-        (me as any)?.job_level === 'Manager' ||
-        (me as any)?.job_level === 'Director' ||
-        (me as any)?.kpi_role === 'manager';
-      setIsManager(mgr);
-
-      const { data: cycle } = await supabase
-        .from('kpi_cycles')
-        .select('expected_score')
-        .eq('period_month', month)
-        .eq('period_year', year)
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
-
-      if ((cycle as any)?.expected_score) {
-        setExpected(Number((cycle as any).expected_score));
-      }
-
       const { data } = await supabase
         .from('employee_kpis')
-        .select('target_value, current_value, weight')
+        .select('target_value, current_value, weight, hrd_score, approval_status')
         .eq('employee_id', user.id)
-        .eq('period_month', month)
-        .eq('period_year', year);
+        .eq('period_month', now.getMonth() + 1)
+        .eq('period_year', now.getFullYear());
 
       const rows = (data as any[]) || [];
       setTotalKpi(rows.length);
+      setRatedCount(rows.filter((r) => r.approval_status === 'approved' || r.hrd_score !== null).length);
+      setWaitingCount(rows.filter((r) => r.approval_status === 'submitted').length);
 
       if (rows.length > 0) {
         const totalWeight = rows.reduce((sum, r) => sum + Number(r.weight || 0), 0);
         const weighted = rows.reduce((sum, r) => {
-          const target = Number(r.target_value) || 1;
-          const pct = Math.min(100, (Number(r.current_value || 0) / target) * 100);
+          const itemScore =
+            r.hrd_score !== null && r.hrd_score !== undefined
+              ? Math.min(100, Math.max(0, Number(r.hrd_score)))
+              : Math.min(100, (Number(r.current_value || 0) / (Number(r.target_value) || 1)) * 100);
           const ratio = totalWeight > 0 ? Number(r.weight) / totalWeight : 1 / rows.length;
-          return sum + pct * ratio;
+          return sum + itemScore * ratio;
         }, 0);
         setScore(Math.round(weighted));
       } else {
         setScore(0);
-      }
-
-      if (mgr && (me as any)?.department) {
-        const { data: subs } = await supabase
-          .from('employees')
-          .select('id')
-          .eq('department', (me as any).department)
-          .in('job_level', ['Staff', 'Supervisor']);
-        const subIds = ((subs as any[]) || []).map((s) => s.id);
-        if (subIds.length > 0) {
-          const { count } = await supabase
-            .from('employee_kpis')
-            .select('*', { count: 'exact', head: true })
-            .in('employee_id', subIds)
-            .eq('approval_status', 'submitted');
-          setPendingTeamApprovals(count || 0);
-        }
       }
     } catch (err) {
       console.error('Gagal memuat widget KPI:', err);
@@ -116,39 +74,33 @@ export default function EmployeeKPIWidget() {
         <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-colors">
           <Target size={22} />
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
-            {score === null ? '...' : `${score}%`}
-          </span>
-          {pendingTeamApprovals > 0 && (
-            <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-rose-500 text-white animate-pulse">
-              <BellRing size={9} /> {pendingTeamApprovals} Approve
-            </span>
-          )}
-        </div>
+        <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+          {score === null ? '...' : `${score}%`}
+        </span>
       </div>
 
       <div className="relative z-10 space-y-2">
         <div>
-          <h4 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-            {isManager ? 'KPI & Tim' : 'KPI Saya'}
-            {isManager && <Users size={13} className="text-indigo-500" />}
-          </h4>
-          <p className="text-[11px] text-gray-500 mt-0.5">
-            {totalKpi > 0 ? `${totalKpi} Target • Ekspektasi ${expected}%` : 'Target & 360° Review'}
+          <h4 className="font-bold text-gray-900 text-sm">KPI Saya</h4>
+          <p className="text-[11px] text-gray-500 mt-0.5 flex items-center gap-1">
+            {totalKpi === 0 ? (
+              'Input & Ajukan ke HRD'
+            ) : waitingCount > 0 ? (
+              <>
+                <Clock size={11} className="text-amber-500" /> {waitingCount} menunggu HRD
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={11} className="text-emerald-500" /> {ratedCount}/{totalKpi} dinilai HRD
+              </>
+            )}
           </p>
         </div>
 
-        <div className="relative w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all duration-500 ${
-              (score || 0) >= expected ? 'bg-emerald-500' : 'bg-indigo-600'
-            }`}
+            className="h-full bg-gradient-to-r from-indigo-600 to-blue-500 rounded-full transition-all duration-500"
             style={{ width: `${score || 0}%` }}
-          />
-          <div
-            className="absolute top-0 bottom-0 w-0.5 bg-amber-400"
-            style={{ left: `${Math.min(100, expected)}%` }}
           />
         </div>
       </div>

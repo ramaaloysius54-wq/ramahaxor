@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { NavLink, Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import {
   LayoutDashboard,
@@ -15,69 +15,133 @@ import {
   Menu,
   X,
   Building2,
-  ShieldCheck,
-  ChevronRight,
-  Target
+  Target,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus
 } from 'lucide-react';
+
+type MenuItem = {
+  name: string;
+  path: string;
+  icon: React.ReactNode;
+  badge?: number;
+  end?: boolean;
+};
+
+type MenuGroup = {
+  label: string;
+  items: MenuItem[];
+};
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [badges, setBadges] = useState({ pendingLeaves: 0, pendingKpis: 0 });
 
-  // Tutup drawer mobile otomatis saat berpindah halaman
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [location.pathname]);
 
-  // Kunci scroll halaman saat drawer mobile terbuka & bersihkan saat unmount
   useEffect(() => {
-    document.body.style.overflow = isMobileMenuOpen ? 'hidden' : 'unset';
+    document.body.style.overflow = isMobileMenuOpen ? 'hidden' : '';
     return () => {
-      document.body.style.overflow = 'unset';
+      document.body.style.overflow = '';
     };
   }, [isMobileMenuOpen]);
 
-  // Fungsi Logout HRD
+  const fetchBadges = useCallback(async () => {
+    try {
+      const [leaveRes, kpiRes] = await Promise.all([
+        supabase
+          .from('leave_requests')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'pending'),
+        supabase
+          .from('employee_kpis')
+          .select('*', { count: 'exact', head: true })
+          .eq('approval_status', 'submitted')
+      ]);
+
+      setBadges({
+        pendingLeaves: leaveRes.count || 0,
+        pendingKpis: kpiRes.count || 0
+      });
+    } catch {
+      // Abaikan jika tabel belum tersedia
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBadges();
+
+    const channel = supabase
+      .channel('hrd-minimal-sidebar-badges')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'leave_requests' }, () => fetchBadges())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_kpis' }, () => fetchBadges())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchBadges]);
+
   const handleLogout = async () => {
-    const confirmLogout = window.confirm('Apakah Anda yakin ingin keluar dari portal HRD?');
+    const confirmLogout = window.confirm('Keluar dari portal HRD?');
     if (!confirmLogout) return;
 
     await supabase.auth.signOut();
     navigate('/login');
   };
 
-  // Struktur Menu HRD Terkelompok
-  const menuGroups = [
+  const menuGroups: MenuGroup[] = [
     {
       label: 'Utama',
       items: [
-        { name: 'Dashboard', path: '/hrd/dashboard', icon: <LayoutDashboard size={19} /> },
-      ],
+        {
+          name: 'Dashboard',
+          path: '/hrd/dashboard',
+          icon: <LayoutDashboard size={17} strokeWidth={1.8} />,
+          end: true
+        }
+      ]
     },
     {
-      label: 'Operasional HR',
+      label: 'Operasional',
       items: [
-        { name: 'Karyawan', path: '/hrd/employees', icon: <Users size={19} /> },
-        { name: 'Absensi', path: '/hrd/attendance', icon: <Clock size={19} /> },
-        { name: 'Cuti & Izin', path: '/hrd/leaves', icon: <CalendarDays size={19} /> },
-        { name: 'Payroll', path: '/hrd/payroll', icon: <Wallet size={19} /> },
-        { name: 'KPI Karyawan', path: '/hrd/kpi', icon: <Target size={19} /> },
-        { name: 'Rekrutmen', path: '/hrd/recruitment', icon: <Briefcase size={19} /> },
-      ],
+        { name: 'Karyawan', path: '/hrd/employees', icon: <Users size={17} strokeWidth={1.8} /> },
+        { name: 'Absensi', path: '/hrd/attendance', icon: <Clock size={17} strokeWidth={1.8} /> },
+        {
+          name: 'Cuti & Izin',
+          path: '/hrd/leaves',
+          icon: <CalendarDays size={17} strokeWidth={1.8} />,
+          badge: badges.pendingLeaves
+        },
+        { name: 'Payroll', path: '/hrd/payroll', icon: <Wallet size={17} strokeWidth={1.8} /> },
+        {
+          name: 'KPI Karyawan',
+          path: '/hrd/kpi',
+          icon: <Target size={17} strokeWidth={1.8} />,
+          badge: badges.pendingKpis
+        },
+        { name: 'Rekrutmen', path: '/hrd/recruitment', icon: <Briefcase size={17} strokeWidth={1.8} /> }
+      ]
     },
     {
       label: 'Administrasi',
       items: [
-        { name: 'Pengumuman', path: '/hrd/announcements/new', icon: <Megaphone size={19} /> },
-        { name: 'Surat Peringatan', path: '/hrd/warning-letters', icon: <AlertOctagon size={19} /> },
-        { name: 'Kelola Akun', path: '/hrd/manage-accounts', icon: <Key size={19} /> },
-      ],
-    },
+        { name: 'Pengumuman', path: '/hrd/announcements/new', icon: <Megaphone size={17} strokeWidth={1.8} /> },
+        { name: 'Surat Peringatan', path: '/hrd/warning-letters', icon: <AlertOctagon size={17} strokeWidth={1.8} /> },
+        { name: 'Kelola Akun', path: '/hrd/manage-accounts', icon: <Key size={17} strokeWidth={1.8} /> }
+      ]
+    }
   ];
 
-  // Judul halaman aktif otomatis untuk Header Bar
-  const allMenuItems = menuGroups.flatMap((group) => group.items);
+  const allMenuItems = menuGroups
+    .flatMap((group) => group.items)
+    .sort((a, b) => b.path.length - a.path.length);
   const currentMenu = allMenuItems.find((item) => location.pathname.startsWith(item.path));
   const pageTitle = currentMenu ? currentMenu.name : 'Portal HRD';
 
@@ -85,125 +149,110 @@ export default function DashboardLayout() {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
-    year: 'numeric',
+    year: 'numeric'
   });
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] flex flex-col lg:flex-row font-sans text-slate-800 selection:bg-indigo-600 selection:text-white">
-      
-      {/* ======================================= */}
-      {/* 1. TOP BAR MOBILE & TABLET              */}
-      {/* ======================================= */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 h-[68px] bg-white/90 backdrop-blur-lg border-b border-slate-200/80 z-40 flex items-center justify-between px-4 sm:px-6 shadow-[0_1px_12px_rgba(15,23,42,0.04)]">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 to-blue-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-600/20 shrink-0">
-            <Building2 size={20} />
-          </div>
-          <div className="min-w-0">
-            <span className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight block truncate leading-tight">
-              PT Rama Cinta Sejati
-            </span>
-            <span className="text-[11px] font-semibold text-indigo-600 block truncate">
-              {pageTitle}
-            </span>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          className="p-2.5 text-slate-700 bg-slate-100/80 hover:bg-slate-200/70 rounded-xl active:scale-95 transition-all border border-slate-200/60"
-          aria-label="Toggle Menu"
-        >
-          {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
-        </button>
-      </header>
-
-      {/* ======================================= */}
-      {/* 2. BACKDROP OVERLAY (MOBILE)            */}
-      {/* ======================================= */}
+    <div className="min-h-screen bg-[#FAFAFA] flex font-sans text-zinc-900 antialiased selection:bg-zinc-900 selection:text-white">
+      {/* Backdrop Mobile */}
       <div
         onClick={() => setIsMobileMenuOpen(false)}
-        className={`
-          fixed inset-0 bg-slate-900/50 backdrop-blur-[2px] z-40 lg:hidden
-          transition-opacity duration-300 ease-in-out
-          ${isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}
-        `}
+        className={`fixed inset-0 bg-zinc-950/30 backdrop-blur-[2px] z-40 lg:hidden transition-opacity duration-200 ${
+          isMobileMenuOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
       />
 
-      {/* ======================================= */}
-      {/* 3. SIDEBAR NAVIGASI                     */}
-      {/* ======================================= */}
+      {/* Sidebar */}
       <aside
-        className={`
-          fixed inset-y-0 left-0 z-50 w-[276px] bg-white flex flex-col
-          border-r border-slate-200/80 shadow-2xl lg:shadow-none
-          lg:sticky lg:top-0 lg:h-screen lg:shrink-0
-          transform transition-transform duration-300 ease-out
-          ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-        `}
+        className={`fixed inset-y-0 left-0 z-50 bg-white border-r border-zinc-200/80 flex flex-col lg:sticky lg:top-0 lg:h-screen lg:shrink-0 transition-all duration-200 ease-out ${
+          isCollapsed ? 'lg:w-[70px]' : 'lg:w-[248px]'
+        } w-[260px] ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
-        {/* Brand Header Sidebar */}
-        <div className="h-[72px] px-5 border-b border-slate-100 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-600 via-blue-600 to-indigo-700 rounded-xl flex items-center justify-center text-white shrink-0 shadow-lg shadow-indigo-600/25">
-              <Building2 size={20} />
+        {/* Brand */}
+        <div
+          className={`h-14 border-b border-zinc-100 flex items-center shrink-0 ${
+            isCollapsed ? 'lg:justify-center px-3' : 'justify-between px-4'
+          }`}
+        >
+          <Link to="/hrd/dashboard" className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-zinc-900 text-white flex items-center justify-center shrink-0">
+              <Building2 size={16} strokeWidth={2} />
             </div>
-            <div className="min-w-0">
-              <h1 className="font-extrabold text-slate-900 text-sm truncate tracking-tight">
+            <div className={`min-w-0 ${isCollapsed ? 'lg:hidden' : ''}`}>
+              <h1 className="text-[13px] font-semibold text-zinc-900 tracking-tight truncate leading-none">
                 PT Rama Cinta Sejati
               </h1>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                  HRIS Portal 2.0
-                </p>
-              </div>
+              <p className="text-[11px] text-zinc-400 mt-0.5 truncate">HRIS Workspace</p>
             </div>
-          </div>
+          </Link>
 
           <button
             onClick={() => setIsMobileMenuOpen(false)}
-            className="lg:hidden p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+            className="lg:hidden p-1.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
             aria-label="Tutup Menu"
           >
-            <X size={18} />
+            <X size={17} />
           </button>
         </div>
 
-        {/* Daftar Menu Terkelompok */}
-        <nav className="flex-1 overflow-y-auto px-3.5 py-5 space-y-6 custom-scrollbar">
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto px-2.5 py-4 space-y-5">
           {menuGroups.map((group) => (
             <div key={group.label}>
-              <p className="px-3 mb-2 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+              <p
+                className={`px-2.5 mb-1.5 text-[10px] font-semibold text-zinc-400 uppercase tracking-wider ${
+                  isCollapsed ? 'lg:hidden' : ''
+                }`}
+              >
                 {group.label}
               </p>
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {group.items.map((item) => (
                   <NavLink
                     key={item.path}
                     to={item.path}
-                    className={({ isActive }) => `
-                      group relative flex items-center justify-between px-3.5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-150
-                      ${
+                    end={item.end}
+                    title={isCollapsed ? item.name : undefined}
+                    className={({ isActive }) =>
+                      `group relative flex items-center rounded-lg text-[13px] transition-colors duration-150 ${
+                        isCollapsed
+                          ? 'lg:justify-center lg:px-0 lg:py-2 px-2.5 py-2 justify-between'
+                          : 'justify-between px-2.5 py-2'
+                      } ${
                         isActive
-                          ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/25'
-                          : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
-                      }
-                    `}
+                          ? 'bg-zinc-900 text-white font-medium'
+                          : 'text-zinc-600 font-normal hover:bg-zinc-100 hover:text-zinc-900'
+                      }`
+                    }
                   >
                     {({ isActive }) => (
                       <>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
                           <span
-                            className={`transition-colors ${
-                              isActive ? 'text-white' : 'text-slate-400 group-hover:text-indigo-600'
+                            className={`shrink-0 ${
+                              isActive ? 'text-white' : 'text-zinc-400 group-hover:text-zinc-800'
                             }`}
                           >
                             {item.icon}
                           </span>
-                          <span>{item.name}</span>
+                          <span className={`truncate ${isCollapsed ? 'lg:hidden' : ''}`}>
+                            {item.name}
+                          </span>
                         </div>
-                        {isActive && <ChevronRight size={15} className="text-indigo-200" />}
+
+                        {item.badge && item.badge > 0 ? (
+                          <span
+                            className={`text-[10px] font-semibold rounded-full flex items-center justify-center shrink-0 ${
+                              isCollapsed
+                                ? 'lg:absolute lg:top-1.5 lg:right-2 lg:w-1.5 lg:h-1.5 lg:p-0 bg-rose-500 text-white px-1.5 py-0.5'
+                                : isActive
+                                ? 'bg-white/20 text-white min-w-[18px] h-[18px] px-1.5'
+                                : 'bg-rose-50 text-rose-600 min-w-[18px] h-[18px] px-1.5'
+                            }`}
+                          >
+                            <span className={isCollapsed ? 'lg:hidden' : ''}>{item.badge}</span>
+                          </span>
+                        ) : null}
                       </>
                     )}
                   </NavLink>
@@ -214,63 +263,88 @@ export default function DashboardLayout() {
         </nav>
 
         {/* Footer Profil & Logout */}
-        <div className="p-3.5 border-t border-slate-100 bg-slate-50/70 space-y-2 shrink-0">
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white border border-slate-200/70 shadow-sm">
-            <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-              <ShieldCheck size={18} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold text-slate-900 truncate">Admin HRD</p>
-              <p className="text-[11px] text-slate-500 truncate">Akses Penuh Sistem</p>
-            </div>
-          </div>
-
-          <button
-            onClick={handleLogout}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 w-full rounded-xl font-semibold text-xs text-rose-600 bg-rose-50/70 hover:bg-rose-600 hover:text-white active:scale-[0.98] transition-all border border-rose-100"
+        <div className="p-2.5 border-t border-zinc-100 shrink-0">
+          <div
+            className={`flex items-center rounded-lg p-2 bg-zinc-50 border border-zinc-200/60 ${
+              isCollapsed ? 'lg:justify-center' : 'justify-between gap-2'
+            }`}
           >
-            <LogOut size={16} />
-            <span>Keluar dari Sistem</span>
-          </button>
+            <div className={`flex items-center gap-2.5 min-w-0 ${isCollapsed ? 'lg:hidden' : ''}`}>
+              <div className="w-7 h-7 rounded-md bg-zinc-900 text-white text-[11px] font-semibold flex items-center justify-center shrink-0">
+                HR
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-zinc-900 truncate leading-tight">Admin HRD</p>
+                <p className="text-[10px] text-zinc-400 truncate">Super Admin</p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleLogout}
+              title="Keluar Sistem"
+              aria-label="Keluar Sistem"
+              className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors shrink-0"
+            >
+              <LogOut size={15} strokeWidth={1.9} />
+            </button>
+          </div>
         </div>
       </aside>
 
-      {/* ======================================= */}
-      {/* 4. WRAPPER HEADER DESKTOP & KONTEN      */}
-      {/* ======================================= */}
+      {/* Area Konten Kanan */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen">
-        
-        {/* Top Bar Desktop */}
-        <header className="hidden lg:flex sticky top-0 z-30 h-[72px] bg-white/85 backdrop-blur-md border-b border-slate-200/80 px-8 items-center justify-between">
-          <div>
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              HRIS / {pageTitle}
-            </p>
-            <h2 className="text-lg font-extrabold text-slate-900 tracking-tight leading-tight">
-              {pageTitle}
-            </h2>
+        {/* Top Bar Minimalis */}
+        <header className="sticky top-0 z-30 h-14 bg-white/80 backdrop-blur-md border-b border-zinc-200/70 px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="lg:hidden p-1.5 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
+              aria-label="Buka Menu"
+            >
+              <Menu size={19} />
+            </button>
+
+            <button
+              onClick={() => setIsCollapsed((prev) => !prev)}
+              className="hidden lg:flex p-1.5 text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors"
+              aria-label="Toggle Sidebar"
+              title={isCollapsed ? 'Perlebar Sidebar' : 'Perkecil Sidebar'}
+            >
+              {isCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+            </button>
+
+            <span className="hidden lg:block h-4 w-px bg-zinc-200" />
+
+            <div className="flex items-center gap-2 text-sm min-w-0">
+              <span className="hidden sm:inline text-zinc-400 font-normal">HRD</span>
+              <span className="hidden sm:inline text-zinc-300">/</span>
+              <h2 className="font-semibold text-zinc-900 tracking-tight truncate">{pageTitle}</h2>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100/80 border border-slate-200/60 text-xs font-semibold text-slate-600">
-              <CalendarDays size={14} className="text-indigo-600" />
-              <span>{todayFormatted}</span>
-            </div>
-            <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-100 text-xs font-bold text-emerald-700">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>Online</span>
-            </div>
+          <div className="flex items-center gap-2.5 shrink-0">
+            <span className="hidden md:inline-flex items-center gap-1.5 text-xs text-zinc-500 px-2.5 py-1 rounded-md bg-zinc-100/80">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {todayFormatted}
+            </span>
+
+            <Link
+              to="/hrd/employees/new"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-medium active:scale-[0.98] transition-all"
+            >
+              <Plus size={14} strokeWidth={2.2} />
+              <span className="hidden sm:inline">Karyawan</span>
+            </Link>
           </div>
         </header>
 
-        {/* Area Konten Utama */}
-        <main className="flex-1 w-full p-4 pt-[88px] sm:p-6 sm:pt-[92px] lg:p-8 lg:pt-8">
+        {/* Main Outlet */}
+        <main className="flex-1 w-full p-4 sm:p-6 lg:p-8">
           <div className="max-w-7xl mx-auto">
             <Outlet />
           </div>
         </main>
       </div>
-
     </div>
   );
 }

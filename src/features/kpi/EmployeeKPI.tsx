@@ -8,19 +8,17 @@ import {
   Loader2,
   CheckCircle2,
   Edit3,
+  Trash2,
   X,
   Save,
   AlertCircle,
   MessageSquare,
   BellRing,
-  Users,
   Send,
-  ThumbsUp,
-  ThumbsDown,
   History,
   Star,
   Plus,
-  ShieldCheck
+  Clock
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -43,8 +41,6 @@ type EmployeeProfile = {
   department: string;
   position: string;
   job_level: string;
-  kpi_role: string;
-  manager_id: string | null;
 };
 
 type KPIRecord = {
@@ -63,14 +59,10 @@ type KPIRecord = {
   period_year: number;
   status: string;
   approval_status: string;
+  hrd_score: number | null;
   hrd_notes: string | null;
-  manager_notes: string | null;
-  employees?: {
-    full_name: string;
-    nik: string;
-    position: string;
-    job_level: string;
-  };
+  employee_notes: string | null;
+  rated_at: string | null;
 };
 
 type Review360 = {
@@ -101,9 +93,12 @@ type KPICycle = {
   is_active: boolean;
 };
 
-const getProgressPercent = (current: number, target: number) => {
-  if (!target || target <= 0) return 0;
-  return Math.min(100, Math.round((Number(current) / Number(target)) * 100));
+const getItemScore = (item: KPIRecord) => {
+  if (item.hrd_score !== null && item.hrd_score !== undefined) {
+    return Math.min(100, Math.max(0, Math.round(Number(item.hrd_score))));
+  }
+  if (!item.target_value || Number(item.target_value) <= 0) return 0;
+  return Math.min(100, Math.round((Number(item.current_value || 0) / Number(item.target_value)) * 100));
 };
 
 const calcWeightedScore = (items: KPIRecord[]) => {
@@ -111,20 +106,20 @@ const calcWeightedScore = (items: KPIRecord[]) => {
   const totalWeight = items.reduce((acc, i) => acc + Number(i.weight || 0), 0);
   return Math.round(
     items.reduce((acc, item) => {
-      const pct = getProgressPercent(item.current_value, item.target_value);
+      const score = getItemScore(item);
       const ratio = totalWeight > 0 ? Number(item.weight) / totalWeight : 1 / items.length;
-      return acc + pct * ratio;
+      return acc + score * ratio;
     }, 0)
   );
 };
 
-const getMonthName = (m: number) => {
+const getShortMonth = (m: number) => {
   const d = new Date();
   d.setMonth(m - 1);
   return d.toLocaleString('id-ID', { month: 'short' });
 };
 
-const getFullMonthName = (m: number) => {
+const getFullMonth = (m: number) => {
   const d = new Date();
   d.setMonth(m - 1);
   return d.toLocaleString('id-ID', { month: 'long' });
@@ -134,7 +129,7 @@ export default function EmployeeKPI() {
   const today = new Date();
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const [activeTab, setActiveTab] = useState<'my_kpi' | 'review_360' | 'history' | 'team'>('my_kpi');
+  const [activeTab, setActiveTab] = useState<'my_kpi' | 'review_360' | 'history'>('my_kpi');
 
   const [me, setMe] = useState<EmployeeProfile | null>(null);
   const [kpis, setKpis] = useState<KPIRecord[]>([]);
@@ -143,19 +138,25 @@ export default function EmployeeKPI() {
   const [reviewsGiven, setReviewsGiven] = useState<Review360[]>([]);
   const [colleagues, setColleagues] = useState<EmployeeProfile[]>([]);
   const [activeCycle, setActiveCycle] = useState<KPICycle | null>(null);
-
-  // Khusus Manager / Approver
-  const [teamMembers, setTeamMembers] = useState<EmployeeProfile[]>([]);
-  const [teamKpis, setTeamKpis] = useState<KPIRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Modal Update Progres Pribadi
-  const [editingKpi, setEditingKpi] = useState<KPIRecord | null>(null);
-  const [progressInput, setProgressInput] = useState('0');
+  // Modal Tambah / Edit KPI Mandiri oleh Karyawan
+  const [showKpiModal, setShowKpiModal] = useState(false);
+  const [editingKpiId, setEditingKpiId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [kpiForm, setKpiForm] = useState({
+    title: '',
+    description: '',
+    category: 'Operasional',
+    target_value: '100',
+    current_value: '0',
+    unit: '%',
+    weight: '25',
+    employee_notes: ''
+  });
 
   // Form 360 Review
-  const [reviewMode, setReviewMode] = useState<'self' | 'peer' | 'manager'>('self');
+  const [reviewMode, setReviewMode] = useState<'self' | 'peer'>('self');
   const [reviewTargetId, setReviewTargetId] = useState('');
   const [reviewForm, setReviewForm] = useState({
     score_quality: 85,
@@ -167,26 +168,6 @@ export default function EmployeeKPI() {
   });
   const [submittingReview, setSubmittingReview] = useState(false);
 
-  // Modal Tambah Target Tim (Khusus Manajer)
-  const [showTeamTargetModal, setShowTeamTargetModal] = useState(false);
-  const [teamForm, setTeamForm] = useState({
-    employee_id: '',
-    title: '',
-    description: '',
-    category: 'Operasional',
-    target_value: '100',
-    unit: '%',
-    weight: '25',
-    expected_benchmark: '80'
-  });
-
-  // Modal Reject Note (Khusus Manajer)
-  const [rejectingKpi, setRejectingKpi] = useState<KPIRecord | null>(null);
-  const [managerNoteInput, setManagerNoteInput] = useState('');
-
-  const isManager =
-    me?.job_level === 'Manager' || me?.job_level === 'Director' || me?.kpi_role === 'manager';
-
   const fetchAllData = useCallback(async () => {
     setLoading(true);
     try {
@@ -195,17 +176,14 @@ export default function EmployeeKPI() {
       } = await supabase.auth.getUser();
       if (!user) return;
 
-      // 1. Profil karyawan + Deteksi Divisi & Level Jabatan
       const { data: myProfile } = await supabase
         .from('employees')
-        .select('id, full_name, nik, department, position, job_level, kpi_role, manager_id')
+        .select('id, full_name, nik, department, position, job_level')
         .eq('id', user.id)
         .single();
-
-      const profile = myProfile as EmployeeProfile | null;
+      const profile = (myProfile as EmployeeProfile) || null;
       setMe(profile);
 
-      // 2. Siklus Evaluasi Aktif (untuk Reminder & Benchmark Ekspektasi)
       const { data: cycleData } = await supabase
         .from('kpi_cycles')
         .select('*')
@@ -216,17 +194,15 @@ export default function EmployeeKPI() {
         .maybeSingle();
       setActiveCycle((cycleData as KPICycle) || null);
 
-      // 3. KPI Pribadi Periode Terpilih
       const { data: myKpiData } = await supabase
         .from('employee_kpis')
         .select('*')
         .eq('employee_id', user.id)
         .eq('period_month', selectedMonth)
         .eq('period_year', selectedYear)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false });
       setKpis((myKpiData as KPIRecord[]) || []);
 
-      // 4. Riwayat Seluruh KPI Pribadi (Perbandingan Periode)
       const { data: historyData } = await supabase
         .from('employee_kpis')
         .select('*')
@@ -235,7 +211,6 @@ export default function EmployeeKPI() {
         .order('period_month', { ascending: true });
       setAllMyKpis((historyData as KPIRecord[]) || []);
 
-      // 5. Data 360 Review (Diterima & Diberikan)
       const { data: recReviews } = await supabase
         .from('kpi_360_reviews')
         .select('*, reviewer:employees!kpi_360_reviews_reviewer_id_fkey(full_name, position)')
@@ -252,47 +227,18 @@ export default function EmployeeKPI() {
         .eq('period_year', selectedYear);
       setReviewsGiven((givReviews as Review360[]) || []);
 
-      // 6. Rekan Sejawat & Anggota Tim berdasarkan Divisi
       if (profile?.department) {
-        const { data: deptPeers } = await supabase
+        const { data: peers } = await supabase
           .from('employees')
-          .select('id, full_name, nik, department, position, job_level, kpi_role, manager_id')
+          .select('id, full_name, nik, department, position, job_level')
           .eq('department', profile.department)
           .neq('id', user.id)
           .eq('is_active', true)
           .order('full_name', { ascending: true });
-
-        const peersList = (deptPeers as EmployeeProfile[]) || [];
-        setColleagues(peersList);
-
-        // Jika otomatis terdeteksi sebagai Manager / Director -> muat KPI Tim Divisi
-        if (
-          profile.job_level === 'Manager' ||
-          profile.job_level === 'Director' ||
-          profile.kpi_role === 'manager'
-        ) {
-          const subordinates = peersList.filter(
-            (p) => p.job_level === 'Staff' || p.job_level === 'Supervisor' || p.manager_id === user.id
-          );
-          setTeamMembers(subordinates);
-
-          const subIds = subordinates.map((s) => s.id);
-          if (subIds.length > 0) {
-            const { data: tKpis } = await supabase
-              .from('employee_kpis')
-              .select('*, employees(full_name, nik, position, job_level)')
-              .in('employee_id', subIds)
-              .eq('period_month', selectedMonth)
-              .eq('period_year', selectedYear)
-              .order('created_at', { ascending: false });
-            setTeamKpis((tKpis as KPIRecord[]) || []);
-          } else {
-            setTeamKpis([]);
-          }
-        }
+        setColleagues((peers as EmployeeProfile[]) || []);
       }
     } catch (err: any) {
-      console.error('Gagal memuat modul KPI:', err.message);
+      console.error('Gagal memuat KPI karyawan:', err.message);
     } finally {
       setLoading(false);
     }
@@ -302,16 +248,10 @@ export default function EmployeeKPI() {
     fetchAllData();
 
     const channel = supabase
-      .channel('realtime-full-kpi-360')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_kpis' }, () => {
-        fetchAllData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'kpi_360_reviews' }, () => {
-        fetchAllData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'kpi_cycles' }, () => {
-        fetchAllData();
-      })
+      .channel('realtime-emp-kpi-hrd-eval')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_kpis' }, () => fetchAllData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'kpi_360_reviews' }, () => fetchAllData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'kpi_cycles' }, () => fetchAllData()).on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, () => fetchAllData())
       .subscribe();
 
     return () => {
@@ -319,37 +259,27 @@ export default function EmployeeKPI() {
     };
   }, [fetchAllData]);
 
-  // Kalkulasi Skor KPI & 360
+  // Statistik Skor
   const totalScore = calcWeightedScore(kpis);
   const expectedScore = activeCycle?.expected_score ?? 80;
-  const achievedCount = kpis.filter((k) => getProgressPercent(k.current_value, k.target_value) >= 100).length;
+  const ratedByHrdCount = kpis.filter((k) => k.approval_status === 'approved' || k.hrd_score !== null).length;
+  const waitingHrdCount = kpis.filter((k) => k.approval_status === 'submitted').length;
+  const rejectedCount = kpis.filter((k) => k.approval_status === 'rejected').length;
 
   const selfReview = reviewsReceived.find((r) => r.reviewer_type === 'self');
   const peerReviews = reviewsReceived.filter((r) => r.reviewer_type === 'peer');
-  const managerReview = reviewsReceived.find((r) => r.reviewer_type === 'manager');
-
   const avgPeerScore = peerReviews.length
     ? Math.round(peerReviews.reduce((a, b) => a + Number(b.average_score || 0), 0) / peerReviews.length)
     : 0;
 
-  const combined360Score = (() => {
-    const parts: number[] = [];
-    if (selfReview) parts.push(Number(selfReview.average_score));
-    if (peerReviews.length > 0) parts.push(avgPeerScore);
-    if (managerReview) parts.push(Number(managerReview.average_score));
-    if (parts.length === 0) return 0;
-    return Math.round(parts.reduce((a, b) => a + b, 0) / parts.length);
-  })();
-
-  // Data Grafik Perbandingan Realisasi vs Ekspektasi Perusahaan
+  // Grafik Perbandingan Capaian vs Ekspektasi
   const comparisonChartData = kpis.map((k) => ({
     name: k.title.length > 14 ? k.title.slice(0, 14) + '…' : k.title,
-    fullTitle: k.title,
-    Realisasi: getProgressPercent(k.current_value, k.target_value),
+    Skor: getItemScore(k),
     Ekspektasi: Number(k.expected_benchmark || expectedScore)
   }));
 
-  // Data Grafik Riwayat & Perbandingan 6 Periode Terakhir
+  // Grafik Riwayat 6 Periode
   const historyPeriods = (() => {
     const map = new Map<string, { year: number; month: number; items: KPIRecord[] }>();
     allMyKpis.forEach((item) => {
@@ -367,7 +297,7 @@ export default function EmployeeKPI() {
       const score = calcWeightedScore(val.items);
       const prevScore = idx > 0 ? calcWeightedScore(arr[idx - 1][1].items) : null;
       return {
-        label: `${getMonthName(val.month)} ${val.year}`,
+        label: `${getShortMonth(val.month)} ${val.year}`,
         score,
         ekspektasi: expectedScore,
         count: val.items.length,
@@ -376,86 +306,116 @@ export default function EmployeeKPI() {
     });
   })();
 
-  // Daftar Pengingat Otomatis (Reminders)
-  const pendingApprovalCount = teamKpis.filter((t) => t.approval_status === 'submitted').length;
+  // Pengingat Otomatis
   const reminders: { type: 'warn' | 'info' | 'urgent'; text: string }[] = [];
-
+  if (rejectedCount > 0) {
+    reminders.push({
+      type: 'urgent',
+      text: `Ada ${rejectedCount} KPI yang diminta revisi oleh HRD. Cek catatan HRD, perbaiki, lalu ajukan ulang.`
+    });
+  }
+  if (kpis.some((k) => k.approval_status === 'draft')) {
+    reminders.push({
+      type: 'warn',
+      text: 'Anda memiliki KPI berstatus Draft. Jangan lupa klik "Ajukan ke HRD" agar segera dinilai.'
+    });
+  }
   if (activeCycle) {
-    const daysToProgress = Math.ceil(
+    const daysLeft = Math.ceil(
       (new Date(activeCycle.progress_deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
     );
-    const daysToReview = Math.ceil(
-      (new Date(activeCycle.review_deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-    );
-
-    const hasDraftKpi = kpis.some((k) => k.approval_status === 'draft' || k.approval_status === 'rejected');
-    if (hasDraftKpi && daysToProgress <= 7) {
+    if (daysLeft <= 7) {
       reminders.push({
-        type: daysToProgress <= 2 ? 'urgent' : 'warn',
+        type: daysLeft <= 2 ? 'urgent' : 'info',
         text:
-          daysToProgress >= 0
-            ? `Tenggat update & submit KPI "${activeCycle.name}" sisa ${daysToProgress} hari lagi (${activeCycle.progress_deadline}).`
-            : `Tenggat update progres KPI telah lewat (${activeCycle.progress_deadline}). Segera submit ke atasan!`
-      });
-    }
-
-    const hasDoneSelf = reviewsGiven.some((r) => r.reviewer_type === 'self');
-    if (!hasDoneSelf && daysToReview <= 10) {
-      reminders.push({
-        type: daysToReview <= 2 ? 'urgent' : 'info',
-        text: `Formulir Self-Assessment 360° belum diisi. Tenggat review: ${activeCycle.review_deadline}.`
-      });
-    }
-  } else {
-    const hasDoneSelf = reviewsGiven.some((r) => r.reviewer_type === 'self');
-    if (kpis.length > 0 && !hasDoneSelf) {
-      reminders.push({
-        type: 'info',
-        text: 'Anda belum mengisi Self-Assessment 360° untuk periode bulan ini.'
+          daysLeft >= 0
+            ? `Batas akhir pengajuan KPI "${activeCycle.name}" sisa ${daysLeft} hari (${activeCycle.progress_deadline}).`
+            : `Tenggat pengajuan KPI "${activeCycle.name}" telah lewat (${activeCycle.progress_deadline}).`
       });
     }
   }
-
-  if (isManager && pendingApprovalCount > 0) {
+  if (kpis.length > 0 && !reviewsGiven.some((r) => r.reviewer_type === 'self')) {
     reminders.push({
-      type: 'urgent',
-      text: `Ada ${pendingApprovalCount} realisasi KPI anggota Divisi ${me?.department} menunggu validasi (Approve/Reject) Anda.`
+      type: 'info',
+      text: 'Self-Assessment 360° bulan ini belum diisi.'
     });
   }
 
-  // Handler Update Progres Pribadi
-  const handleSaveProgress = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingKpi) return;
-    const numericVal = Number(progressInput);
-    if (isNaN(numericVal) || numericVal < 0) return alert('Masukkan angka yang valid.');
+  // Modal Tambah / Edit KPI oleh Karyawan
+  const openAddModal = () => {
+    setEditingKpiId(null);
+    setKpiForm({
+      title: '',
+      description: '',
+      category: 'Operasional',
+      target_value: '100',
+      current_value: '0',
+      unit: '%',
+      weight: '25',
+      employee_notes: ''
+    });
+    setShowKpiModal(true);
+  };
 
+  const openEditModal = (item: KPIRecord) => {
+    setEditingKpiId(item.id);
+    setKpiForm({
+      title: item.title,
+      description: item.description || '',
+      category: item.category || 'Operasional',
+      target_value: String(item.target_value),
+      current_value: String(item.current_value),
+      unit: item.unit || '%',
+      weight: String(item.weight),
+      employee_notes: item.employee_notes || ''
+    });
+    setShowKpiModal(true);
+  };
+
+  const handleSaveKpi = async (e: React.FormEvent, submitDirectly = false) => {
+    e.preventDefault();
+    if (!me) return;
     setSaving(true);
     try {
-      const nextStatus = numericVal >= Number(editingKpi.target_value) ? 'achieved' : 'on_progress';
-      const { error } = await supabase
-        .from('employee_kpis')
-        .update({
-          current_value: numericVal,
-          status: nextStatus,
-          approval_status: editingKpi.approval_status === 'rejected' ? 'draft' : editingKpi.approval_status,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', editingKpi.id);
+      const payload = {
+        employee_id: me.id,
+        department: me.department || 'Operasional',
+        title: kpiForm.title.trim(),
+        description: kpiForm.description.trim() || null,
+        category: kpiForm.category,
+        target_value: Number(kpiForm.target_value) || 100,
+        current_value: Number(kpiForm.current_value) || 0,
+        unit: kpiForm.unit.trim() || '%',
+        weight: Number(kpiForm.weight) || 25,
+        expected_benchmark: expectedScore,
+        period_month: selectedMonth,
+        period_year: selectedYear,
+        employee_notes: kpiForm.employee_notes.trim() || null,
+        approval_status: submitDirectly ? 'submitted' : 'draft',
+        status: 'on_progress',
+        submitted_at: submitDirectly ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString()
+      };
 
-      if (error) throw error;
-      setEditingKpi(null);
+      if (editingKpiId) {
+        const { error } = await supabase.from('employee_kpis').update(payload).eq('id', editingKpiId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('employee_kpis').insert([payload]);
+        if (error) throw error;
+      }
+
+      setShowKpiModal(false);
       await fetchAllData();
     } catch (err: any) {
-      alert('Gagal update progres: ' + err.message);
+      alert('Gagal menyimpan KPI: ' + err.message);
     } finally {
       setSaving(false);
     }
   };
 
-  // Handler Submit KPI ke Atasan (Employee -> Manager)
-  const handleSubmitToManager = async (item: KPIRecord) => {
-    if (!window.confirm(`Kirim realisasi KPI "${item.title}" untuk divalidasi atasan?`)) return;
+  const handleSubmitToHRD = async (item: KPIRecord) => {
+    if (!window.confirm(`Ajukan KPI "${item.title}" ke HRD untuk dinilai?`)) return;
     try {
       const { error } = await supabase
         .from('employee_kpis')
@@ -468,22 +428,31 @@ export default function EmployeeKPI() {
       if (error) throw error;
       await fetchAllData();
     } catch (err: any) {
-      alert('Gagal submit KPI: ' + err.message);
+      alert('Gagal mengajukan ke HRD: ' + err.message);
     }
   };
 
-  // Handler Submit 360 Review
+  const handleDeleteKpi = async (item: KPIRecord) => {
+    if (!window.confirm(`Hapus KPI "${item.title}"?`)) return;
+    try {
+      const { error } = await supabase.from('employee_kpis').delete().eq('id', item.id);
+      if (error) throw error;
+      await fetchAllData();
+    } catch (err: any) {
+      alert('Gagal menghapus KPI: ' + err.message);
+    }
+  };
+
   const handleSubmit360 = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!me) return;
-    const targetEmpId = reviewMode === 'self' ? me.id : reviewTargetId;
-    if (!targetEmpId) return alert('Pilih rekan/anggota tim yang akan dinilai.');
-
+    const targetId = reviewMode === 'self' ? me.id : reviewTargetId;
+    if (!targetId) return alert('Pilih rekan kerja yang ingin dinilai.');
     setSubmittingReview(true);
     try {
       const { error } = await supabase.from('kpi_360_reviews').upsert(
         {
-          employee_id: targetEmpId,
+          employee_id: targetId,
           reviewer_id: me.id,
           reviewer_type: reviewMode,
           period_month: selectedMonth,
@@ -509,80 +478,9 @@ export default function EmployeeKPI() {
       });
       await fetchAllData();
     } catch (err: any) {
-      alert('Gagal menyimpan penilaian 360°: ' + err.message);
+      alert('Gagal menyimpan 360° Review: ' + err.message);
     } finally {
       setSubmittingReview(false);
-    }
-  };
-
-  // Handler Manager: Tambah Target Tim
-  const handleAddTeamTarget = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!me || !teamForm.employee_id) return alert('Pilih anggota tim.');
-    setSaving(true);
-    try {
-      const { error } = await supabase.from('employee_kpis').insert([
-        {
-          employee_id: teamForm.employee_id,
-          department: me.department,
-          title: teamForm.title.trim(),
-          description: teamForm.description.trim() || null,
-          category: teamForm.category,
-          target_value: Number(teamForm.target_value) || 100,
-          current_value: 0,
-          unit: teamForm.unit.trim() || '%',
-          weight: Number(teamForm.weight) || 25,
-          expected_benchmark: Number(teamForm.expected_benchmark) || 80,
-          period_month: selectedMonth,
-          period_year: selectedYear,
-          status: 'on_progress',
-          approval_status: 'draft'
-        }
-      ]);
-      if (error) throw error;
-      setShowTeamTargetModal(false);
-      setTeamForm({
-        employee_id: '',
-        title: '',
-        description: '',
-        category: 'Operasional',
-        target_value: '100',
-        unit: '%',
-        weight: '25',
-        expected_benchmark: '80'
-      });
-      await fetchAllData();
-    } catch (err: any) {
-      alert('Gagal menambah target tim: ' + err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Handler Manager: Approve / Reject Realisasi Bawahan
-  const handleApproveReject = async (
-    item: KPIRecord,
-    decision: 'approved' | 'rejected',
-    note?: string
-  ) => {
-    if (!me) return;
-    try {
-      const { error } = await supabase
-        .from('employee_kpis')
-        .update({
-          approval_status: decision,
-          status: decision === 'approved' ? 'reviewed' : 'on_progress',
-          approved_by: me.id,
-          manager_notes: note || (decision === 'approved' ? 'Realisasi disetujui Manajer.' : 'Perlu revisi realisasi.'),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', item.id);
-      if (error) throw error;
-      setRejectingKpi(null);
-      setManagerNoteInput('');
-      await fetchAllData();
-    } catch (err: any) {
-      alert('Gagal memvalidasi KPI: ' + err.message);
     }
   };
 
@@ -606,16 +504,9 @@ export default function EmployeeKPI() {
                 <Target size={22} className="text-blue-200" />
               </div>
               <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-lg sm:text-xl font-extrabold leading-tight">Performance & KPI</h1>
-                  {isManager && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full bg-amber-400/20 text-amber-200 border border-amber-300/30">
-                      <ShieldCheck size={11} /> Manager / Approver
-                    </span>
-                  )}
-                </div>
+                <h1 className="text-lg sm:text-xl font-extrabold leading-tight">KPI & Penilaian Kinerja</h1>
                 <p className="text-xs text-indigo-200 mt-0.5">
-                  {me ? `${me.position} • Divisi ${me.department} (${me.job_level})` : 'Memuat profil...'}
+                  {me ? `${me.full_name} • ${me.position} (${me.department})` : 'Memuat profil...'}
                 </p>
               </div>
             </div>
@@ -629,31 +520,28 @@ export default function EmployeeKPI() {
 
           <div className="grid grid-cols-3 gap-3 bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/15">
             <div>
-              <p className="text-[10px] text-indigo-200 uppercase font-bold tracking-wider">Skor KPI Saya</p>
+              <p className="text-[10px] text-indigo-200 uppercase font-bold">Skor Akhir</p>
               <p className="text-2xl sm:text-3xl font-extrabold mt-0.5">
                 {totalScore}
                 <span className="text-xs font-semibold text-indigo-200">/100</span>
               </p>
             </div>
             <div className="border-x border-white/15 px-3">
-              <p className="text-[10px] text-indigo-200 uppercase font-bold tracking-wider">Ekspektasi</p>
+              <p className="text-[10px] text-indigo-200 uppercase font-bold">Dinilai HRD</p>
               <p className="text-2xl sm:text-3xl font-extrabold mt-0.5 text-emerald-300">
-                {expectedScore}
-                <span className="text-xs font-semibold text-indigo-200">%</span>
+                {ratedByHrdCount}
+                <span className="text-xs font-semibold text-indigo-200">/{kpis.length}</span>
               </p>
             </div>
             <div className="text-right">
-              <p className="text-[10px] text-indigo-200 uppercase font-bold tracking-wider">Skor 360°</p>
-              <p className="text-2xl sm:text-3xl font-extrabold mt-0.5 text-cyan-200">
-                {combined360Score || '-'}
-              </p>
+              <p className="text-[10px] text-indigo-200 uppercase font-bold">Menunggu HRD</p>
+              <p className="text-2xl sm:text-3xl font-extrabold mt-0.5 text-amber-300">{waitingHrdCount}</p>
             </div>
           </div>
 
-          {/* Progress Bar vs Ekspektasi */}
           <div className="mt-4">
             <div className="flex justify-between text-[11px] text-indigo-100 mb-1.5">
-              <span>Capaian Berbobot ({achievedCount}/{kpis.length} target tercapai)</span>
+              <span>Ekspektasi Perusahaan: {expectedScore}%</span>
               <span className="font-bold">
                 {totalScore >= expectedScore
                   ? `+${totalScore - expectedScore}% di atas ekspektasi`
@@ -668,7 +556,6 @@ export default function EmployeeKPI() {
               <div
                 className="absolute top-0 bottom-0 w-0.5 bg-amber-300"
                 style={{ left: `${Math.min(100, expectedScore)}%` }}
-                title={`Ekspektasi Perusahaan ${expectedScore}%`}
               />
             </div>
           </div>
@@ -676,7 +563,7 @@ export default function EmployeeKPI() {
         <div className="absolute -top-20 -right-20 w-56 h-56 bg-blue-400 rounded-full blur-3xl opacity-20 pointer-events-none" />
       </div>
 
-      {/* NOTIFIKASI & PENGINGAT OTOMATIS */}
+      {/* NOTIFIKASI PENGINGAT */}
       {reminders.length > 0 && (
         <div className="space-y-2">
           {reminders.map((rem, idx) => (
@@ -690,19 +577,19 @@ export default function EmployeeKPI() {
                   : 'bg-blue-50 border-blue-200 text-blue-700'
               }`}
             >
-              <BellRing size={16} className="shrink-0 animate-bounce" />
+              <BellRing size={16} className="shrink-0" />
               <span>{rem.text}</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* FILTER PERIODE & NAVIGASI TAB */}
+      {/* TAB NAVIGASI + PERIODE + TOMBOL TAMBAH KPI */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
           <button
             onClick={() => setActiveTab('my_kpi')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'my_kpi' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'
             }`}
           >
@@ -710,7 +597,7 @@ export default function EmployeeKPI() {
           </button>
           <button
             onClick={() => setActiveTab('review_360')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'review_360' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'
             }`}
           >
@@ -718,77 +605,65 @@ export default function EmployeeKPI() {
           </button>
           <button
             onClick={() => setActiveTab('history')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'history' ? 'bg-indigo-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50'
             }`}
           >
             <History size={14} /> Riwayat
           </button>
-
-          {/* OTOMATIS MUNCUL HANYA JIKA TERDETEKSI SEBAGAI MANAGER / DIRECTOR */}
-          {isManager && (
-            <button
-              onClick={() => setActiveTab('team')}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
-                activeTab === 'team' ? 'bg-indigo-600 text-white shadow-sm' : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100'
-              }`}
-            >
-              <Users size={14} /> KPI Tim
-              {pendingApprovalCount > 0 && (
-                <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500 text-white">
-                  {pendingApprovalCount}
-                </span>
-              )}
-            </button>
-          )}
         </div>
 
-        <div className="bg-white px-3 py-2 rounded-2xl border border-gray-100 shadow-sm flex items-center justify-between sm:justify-end gap-2">
-          <CalendarDays size={15} className="text-indigo-600" />
-          <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(Number(e.target.value))}
-            className="bg-transparent text-xs font-bold text-gray-700 outline-none cursor-pointer"
+        <div className="flex items-center gap-2">
+          <div className="bg-white px-3 py-2 rounded-2xl border border-gray-100 shadow-sm flex items-center gap-2 flex-1 sm:flex-none">
+            <CalendarDays size={15} className="text-indigo-600" />
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              className="bg-transparent text-xs font-bold text-gray-700 outline-none"
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>{getFullMonth(m)}</option>
+              ))}
+            </select>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="bg-transparent text-xs font-bold text-gray-700 outline-none"
+            >
+              {[2025, 2026, 2027].map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={openAddModal}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 active:scale-95 transition-all shrink-0"
           >
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-              <option key={m} value={m}>{getFullMonthName(m)}</option>
-            ))}
-          </select>
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(Number(e.target.value))}
-            className="bg-transparent text-xs font-bold text-gray-700 outline-none cursor-pointer"
-          >
-            {[2025, 2026, 2027].map((y) => (
-              <option key={y} value={y}>{y}</option>
-            ))}
-          </select>
+            <Plus size={15} /> Tambah KPI
+          </button>
         </div>
       </div>
 
       {loading ? (
         <div className="flex flex-col items-center justify-center py-16 text-gray-400">
           <Loader2 className="animate-spin mb-2 text-indigo-600" size={30} />
-          <span className="text-sm font-medium">Menyinkronkan data KPI...</span>
+          <span className="text-sm font-medium">Memuat data KPI...</span>
         </div>
       ) : (
         <>
-          {/* ================================================= */}
-          {/* TAB 1: KPI SAYA & GRAFIK VS EKSPEKTASI PERUSAHAAN */}
-          {/* ================================================= */}
+          {/* TAB 1: DAFTAR KPI KARYAWAN & HASIL PENILAIAN HRD */}
           {activeTab === 'my_kpi' && (
             <div className="space-y-5">
               {comparisonChartData.length > 0 && (
                 <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                        <TrendingUp size={16} className="text-indigo-600" /> Pencapaian vs Ekspektasi Perusahaan
-                      </h3>
-                      <p className="text-xs text-gray-500">Perbandingan persentase realisasi tiap indikator (%)</p>
-                    </div>
-                  </div>
-                  <div className="h-60 w-full">
+                  <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2 mb-1">
+                    <TrendingUp size={16} className="text-indigo-600" /> Capaian KPI vs Ekspektasi Perusahaan
+                  </h3>
+                  <p className="text-xs text-gray-500 mb-4">
+                    Menggunakan Nilai Resmi HRD (jika sudah dinilai) atau estimasi progres mandiri.
+                  </p>
+                  <div className="h-56 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={comparisonChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -797,7 +672,7 @@ export default function EmployeeKPI() {
                         <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }} />
                         <Legend wrapperStyle={{ fontSize: '12px' }} />
                         <ReferenceLine y={expectedScore} stroke="#f59e0b" strokeDasharray="4 4" />
-                        <Bar dataKey="Realisasi" fill="#4f46e5" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="Skor" fill="#4f46e5" radius={[8, 8, 0, 0]} />
                         <Bar dataKey="Ekspektasi" fill="#cbd5e1" radius={[8, 8, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -806,19 +681,27 @@ export default function EmployeeKPI() {
               )}
 
               {kpis.length === 0 ? (
-                <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm text-center flex flex-col items-center">
-                  <AlertCircle size={40} className="text-gray-300 mb-3" />
-                  <p className="font-bold text-gray-800">Belum Ada Target KPI</p>
-                  <p className="text-xs text-gray-500 mt-1 max-w-xs">
-                    Belum ada indikator KPI ditetapkan untuk periode {getFullMonthName(selectedMonth)} {selectedYear}.
+                <div className="bg-white p-10 rounded-3xl border border-gray-100 shadow-sm text-center flex flex-col items-center">
+                  <AlertCircle size={42} className="text-gray-300 mb-3" />
+                  <p className="font-bold text-gray-800">Belum Ada KPI untuk {getFullMonth(selectedMonth)} {selectedYear}</p>
+                  <p className="text-xs text-gray-500 mt-1 max-w-xs mb-4">
+                    Tambahkan indikator target & pencapaian kerja Anda sekarang agar bisa dinilai oleh tim HRD.
                   </p>
+                  <button
+                    onClick={openAddModal}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700"
+                  >
+                    <Plus size={15} /> Tambah KPI Pertama
+                  </button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {kpis.map((item) => {
-                    const percent = getProgressPercent(item.current_value, item.target_value);
-                    const bench = Number(item.expected_benchmark || expectedScore);
-                    const isLocked = item.approval_status === 'approved' || item.status === 'reviewed';
+                    const score = getItemScore(item);
+                    const isRated = item.approval_status === 'approved' || item.hrd_score !== null;
+                    const isSubmitted = item.approval_status === 'submitted';
+                    const isRejected = item.approval_status === 'rejected';
+                    const canEdit = !isRated && !isSubmitted;
 
                     return (
                       <div key={item.id} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-col justify-between space-y-4">
@@ -830,86 +713,92 @@ export default function EmployeeKPI() {
                               </span>
                               <span className="text-[10px] font-bold text-gray-400">Bobot {item.weight}%</span>
                             </div>
-                            <span
-                              className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                                item.approval_status === 'approved'
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                  : item.approval_status === 'submitted'
-                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                  : item.approval_status === 'rejected'
-                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                  : 'bg-gray-50 text-gray-600 border-gray-200'
-                              }`}
-                            >
-                              {item.approval_status === 'approved'
-                                ? 'Disetujui'
-                                : item.approval_status === 'submitted'
-                                ? 'Menunggu Validasi'
-                                : item.approval_status === 'rejected'
-                                ? 'Ditolak / Revisi'
-                                : 'Draft'}
-                            </span>
+
+                            {isRated ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <CheckCircle2 size={11} /> Dinilai HRD: {item.hrd_score ?? score}
+                              </span>
+                            ) : isSubmitted ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                                <Clock size={11} /> Menunggu HRD
+                              </span>
+                            ) : isRejected ? (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                                Perlu Revisi HRD
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                Draft
+                              </span>
+                            )}
                           </div>
 
                           <h4 className="font-bold text-gray-900 text-sm">{item.title}</h4>
                           {item.description && <p className="text-xs text-gray-500 mt-1">{item.description}</p>}
                         </div>
 
-                        <div className="space-y-2">
+                        <div className="space-y-2.5">
                           <div className="flex justify-between text-xs">
                             <span className="text-gray-500">
-                              Aktual: <strong className="text-gray-900">{item.current_value} {item.unit}</strong>
+                              Realisasi: <strong className="text-gray-900">{item.current_value} / {item.target_value} {item.unit}</strong>
                             </span>
-                            <span className="text-gray-500">
-                              Target: <strong className="text-gray-900">{item.target_value} {item.unit}</strong> ({percent}%)
+                            <span className="font-extrabold text-indigo-600">
+                              {isRated ? `Nilai HRD: ${score}%` : `Progres: ${score}%`}
                             </span>
                           </div>
-                          <div className="relative w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full transition-all duration-500 ${
-                                percent >= bench ? 'bg-emerald-500' : percent >= 60 ? 'bg-indigo-600' : 'bg-amber-500'
+                                isRated ? 'bg-emerald-500' : score >= 75 ? 'bg-indigo-600' : 'bg-amber-500'
                               }`}
-                              style={{ width: `${percent}%` }}
-                            />
-                            <div
-                              className="absolute top-0 bottom-0 w-0.5 bg-amber-500"
-                              style={{ left: `${Math.min(100, bench)}%` }}
-                              title={`Ekspektasi ${bench}%`}
+                              style={{ width: `${score}%` }}
                             />
                           </div>
 
-                          {(item.manager_notes || item.hrd_notes) && (
-                            <div className="bg-slate-50 border border-slate-100 rounded-xl p-2.5 text-xs text-slate-600 flex items-start gap-2">
-                              <MessageSquare size={13} className="text-indigo-500 shrink-0 mt-0.5" />
+                          {item.employee_notes && (
+                            <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5 text-xs text-gray-600">
+                              <strong className="text-gray-700 block text-[11px]">Catatan / Bukti Saya:</strong>
+                              <span>{item.employee_notes}</span>
+                            </div>
+                          )}
+
+                          {item.hrd_notes && (
+                            <div className={`border rounded-xl p-2.5 text-xs flex items-start gap-2 ${
+                              isRejected ? 'bg-rose-50 border-rose-100 text-rose-700' : 'bg-emerald-50/70 border-emerald-100 text-emerald-800'
+                            }`}>
+                              <MessageSquare size={13} className="shrink-0 mt-0.5" />
                               <div>
-                                <strong className="text-slate-700 block text-[11px]">
-                                  {item.manager_notes ? 'Catatan Atasan:' : 'Catatan HRD:'}
-                                </strong>
-                                <span>{item.manager_notes || item.hrd_notes}</span>
+                                <strong className="block text-[11px]">Evaluasi HRD:</strong>
+                                <span>{item.hrd_notes}</span>
                               </div>
                             </div>
                           )}
 
-                          <div className="flex items-center justify-end gap-2 pt-1">
-                            <button
-                              onClick={() => {
-                                setEditingKpi(item);
-                                setProgressInput(String(item.current_value ?? 0));
-                              }}
-                              disabled={isLocked}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-colors disabled:opacity-40"
-                            >
-                              <Edit3 size={13} /> Update
-                            </button>
-                            {!isLocked && item.approval_status !== 'submitted' && (
+                          {canEdit && (
+                            <div className="flex items-center justify-between gap-2 pt-1">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => openEditModal(item)}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-colors"
+                                >
+                                  <Edit3 size={12} /> Edit
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteKpi(item)}
+                                  className="p-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white transition-colors"
+                                  title="Hapus KPI"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
                               <button
-                                onClick={() => handleSubmitToManager(item)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                                onClick={() => handleSubmitToHRD(item)}
+                                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
                               >
-                                <Send size={13} /> Submit ke Atasan
+                                <Send size={12} /> Ajukan ke HRD
                               </button>
-                            )}
-                          </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -919,190 +808,125 @@ export default function EmployeeKPI() {
             </div>
           )}
 
-          {/* ================================================= */}
-          {/* TAB 2: EVALUASI & PENILAIAN 360 DERAJAT           */}
-          {/* ================================================= */}
+          {/* TAB 2: 360 REVIEW */}
           {activeTab === 'review_360' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {/* Ringkasan 360 yang Diterima */}
               <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
                 <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
                   <Star size={18} className="text-amber-500" /> Rapor 360° Saya
                 </h3>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="p-3.5 rounded-2xl bg-blue-50 border border-blue-100 text-center">
-                    <p className="text-[10px] font-bold text-blue-600 uppercase">Self</p>
-                    <p className="text-xl font-extrabold text-gray-900 mt-1">
-                      {selfReview ? selfReview.average_score : '-'}
-                    </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-4 rounded-2xl bg-blue-50 border border-blue-100 text-center">
+                    <p className="text-[10px] font-bold text-blue-600 uppercase">Self-Assessment</p>
+                    <p className="text-2xl font-extrabold text-gray-900 mt-1">{selfReview ? selfReview.average_score : '-'}</p>
                   </div>
-                  <div className="p-3.5 rounded-2xl bg-purple-50 border border-purple-100 text-center">
-                    <p className="text-[10px] font-bold text-purple-600 uppercase">Peer ({peerReviews.length})</p>
-                    <p className="text-xl font-extrabold text-gray-900 mt-1">
-                      {peerReviews.length > 0 ? avgPeerScore : '-'}
-                    </p>
-                  </div>
-                  <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-100 text-center">
-                    <p className="text-[10px] font-bold text-emerald-600 uppercase">Atasan</p>
-                    <p className="text-xl font-extrabold text-gray-900 mt-1">
-                      {managerReview ? managerReview.average_score : '-'}
-                    </p>
+                  <div className="p-4 rounded-2xl bg-purple-50 border border-purple-100 text-center">
+                    <p className="text-[10px] font-bold text-purple-600 uppercase">Peer Review ({peerReviews.length})</p>
+                    <p className="text-2xl font-extrabold text-gray-900 mt-1">{peerReviews.length > 0 ? avgPeerScore : '-'}</p>
                   </div>
                 </div>
-
-                <div className="space-y-3 pt-2">
-                  <p className="text-xs font-bold text-gray-500 uppercase">Umpan Balik Masuk</p>
+                <div className="space-y-2.5 pt-2">
                   {reviewsReceived.length === 0 ? (
-                    <p className="text-xs text-gray-400 italic py-4 text-center">
-                      Belum ada penilaian 360° untuk periode ini.
-                    </p>
+                    <p className="text-xs text-gray-400 text-center py-6">Belum ada umpan balik 360° di periode ini.</p>
                   ) : (
                     reviewsReceived.map((rev) => (
-                      <div key={rev.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1.5 text-xs">
-                        <div className="flex justify-between items-center">
-                          <span className="font-bold text-gray-800 uppercase text-[10px] px-2 py-0.5 rounded-md bg-white border border-gray-200">
-                            {rev.reviewer_type === 'self'
-                              ? 'Self-Assessment'
-                              : rev.reviewer_type === 'manager'
-                              ? `Atasan (${rev.reviewer?.full_name || 'Manajer'})`
-                              : `Peer Review (${rev.reviewer?.full_name || 'Rekan'})`}
+                      <div key={rev.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-100 text-xs space-y-1">
+                        <div className="flex justify-between font-bold">
+                          <span className="text-gray-800">
+                            {rev.reviewer_type === 'self' ? 'Penilaian Mandiri' : `Rekan (${rev.reviewer?.full_name || 'Peer'})`}
                           </span>
-                          <span className="font-extrabold text-indigo-600">{rev.average_score} / 100</span>
+                          <span className="text-indigo-600">{rev.average_score}/100</span>
                         </div>
-                        {rev.strengths && (
-                          <p className="text-gray-700">
-                            <strong className="text-emerald-700">Kelebihan:</strong> {rev.strengths}
-                          </p>
-                        )}
-                        {rev.improvements && (
-                          <p className="text-gray-700">
-                            <strong className="text-amber-700">Saran Pengembangan:</strong> {rev.improvements}
-                          </p>
-                        )}
+                        {rev.strengths && <p className="text-gray-600"><b>Kelebihan:</b> {rev.strengths}</p>}
+                        {rev.improvements && <p className="text-gray-600"><b>Saran:</b> {rev.improvements}</p>}
                       </div>
                     ))
                   )}
                 </div>
               </div>
 
-              {/* Form Isi Self / Peer / Manager Review */}
               <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-                <h3 className="font-bold text-gray-900 text-base">Isi Formulir Penilaian 360°</h3>
-
+                <h3 className="font-bold text-gray-900 text-base">Isi Evaluasi 360°</h3>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => setReviewMode('self')}
-                    className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
-                      reviewMode === 'self'
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-gray-50 text-gray-600 border-gray-200'
+                    className={`flex-1 py-2 rounded-xl text-xs font-bold border ${
+                      reviewMode === 'self' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-50 text-gray-600 border-gray-200'
                     }`}
                   >
-                    Penilaian Mandiri
+                    Self-Assessment
                   </button>
                   <button
                     type="button"
                     onClick={() => setReviewMode('peer')}
-                    className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
-                      reviewMode === 'peer'
-                        ? 'bg-indigo-600 text-white border-indigo-600'
-                        : 'bg-gray-50 text-gray-600 border-gray-200'
+                    className={`flex-1 py-2 rounded-xl text-xs font-bold border ${
+                      reviewMode === 'peer' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-50 text-gray-600 border-gray-200'
                     }`}
                   >
                     Peer Review
                   </button>
-                  {isManager && (
-                    <button
-                      type="button"
-                      onClick={() => setReviewMode('manager')}
-                      className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
-                        reviewMode === 'manager'
-                          ? 'bg-indigo-600 text-white border-indigo-600'
-                          : 'bg-gray-50 text-gray-600 border-gray-200'
-                      }`}
-                    >
-                      Nilai Bawahan
-                    </button>
-                  )}
                 </div>
 
-                <form onSubmit={handleSubmit360} className="space-y-3.5">
-                  {reviewMode !== 'self' && (
-                    <div>
-                      <label className="block text-xs font-bold text-gray-600 mb-1">
-                        Pilih {reviewMode === 'manager' ? 'Anggota Tim' : 'Rekan Sejawat'} (Divisi {me?.department})
-                      </label>
-                      <select
-                        required
-                        value={reviewTargetId}
-                        onChange={(e) => setReviewTargetId(e.target.value)}
-                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-                      >
-                        <option value="">-- Pilih Karyawan --</option>
-                        {(reviewMode === 'manager' ? teamMembers : colleagues).map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.full_name} ({c.position})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                <form onSubmit={handleSubmit360} className="space-y-3">
+                  {reviewMode === 'peer' && (
+                    <select
+                      required
+                      value={reviewTargetId}
+                      onChange={(e) => setReviewTargetId(e.target.value)}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none"
+                    >
+                      <option value="">-- Pilih Rekan Sejawat --</option>
+                      {colleagues.map((c) => (
+                        <option key={c.id} value={c.id}>{c.full_name} ({c.position})</option>
+                      ))}
+                    </select>
                   )}
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2.5">
                     {[
                       { key: 'score_quality', label: 'Kualitas Kerja' },
-                      { key: 'score_teamwork', label: 'Kerja Sama Tim' },
+                      { key: 'score_teamwork', label: 'Kerja Sama' },
                       { key: 'score_initiative', label: 'Inisiatif' },
-                      { key: 'score_discipline', label: 'Kedisiplinan' }
-                    ].map((field) => (
-                      <div key={field.key} className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                        <div className="flex justify-between text-xs font-bold text-gray-700 mb-1">
-                          <span>{field.label}</span>
-                          <span className="text-indigo-600">{(reviewForm as any)[field.key]}</span>
+                      { key: 'score_discipline', label: 'Disiplin' }
+                    ].map((f) => (
+                      <div key={f.key} className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                        <div className="flex justify-between text-xs font-bold mb-1">
+                          <span>{f.label}</span>
+                          <span className="text-indigo-600">{(reviewForm as any)[f.key]}</span>
                         </div>
                         <input
                           type="range"
                           min={20}
                           max={100}
-                          value={(reviewForm as any)[field.key]}
-                          onChange={(e) =>
-                            setReviewForm({ ...reviewForm, [field.key]: Number(e.target.value) })
-                          }
+                          value={(reviewForm as any)[f.key]}
+                          onChange={(e) => setReviewForm({ ...reviewForm, [f.key]: Number(e.target.value) })}
                           className="w-full accent-indigo-600"
                         />
                       </div>
                     ))}
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-gray-600 mb-1">Kelebihan / Pencapaian Utama</label>
-                    <textarea
-                      rows={2}
-                      value={reviewForm.strengths}
-                      onChange={(e) => setReviewForm({ ...reviewForm, strengths: e.target.value })}
-                      placeholder="Apa hal terbaik yang ditunjukkan di periode ini?"
-                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-gray-600 mb-1">Area Pengembangan / Saran</label>
-                    <textarea
-                      rows={2}
-                      value={reviewForm.improvements}
-                      onChange={(e) => setReviewForm({ ...reviewForm, improvements: e.target.value })}
-                      placeholder="Apa yang bisa ditingkatkan untuk periode berikutnya?"
-                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-
+                  <textarea
+                    rows={2}
+                    value={reviewForm.strengths}
+                    onChange={(e) => setReviewForm({ ...reviewForm, strengths: e.target.value })}
+                    placeholder="Kelebihan / pencapaian..."
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none"
+                  />
+                  <textarea
+                    rows={2}
+                    value={reviewForm.improvements}
+                    onChange={(e) => setReviewForm({ ...reviewForm, improvements: e.target.value })}
+                    placeholder="Area pengembangan..."
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none"
+                  />
                   <button
                     type="submit"
                     disabled={submittingReview}
-                    className="w-full py-3 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+                    className="w-full py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 flex items-center justify-center gap-1.5"
                   >
-                    {submittingReview ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                    {submittingReview ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                     Simpan Penilaian 360°
                   </button>
                 </form>
@@ -1110,19 +934,16 @@ export default function EmployeeKPI() {
             </div>
           )}
 
-          {/* ================================================= */}
-          {/* TAB 3: RIWAYAT & PERBANDINGAN PERIODE             */}
-          {/* ================================================= */}
+          {/* TAB 3: RIWAYAT PERIODE */}
           {activeTab === 'history' && (
             <div className="space-y-5">
               <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
-                <h3 className="font-bold text-gray-900 text-base mb-1">Tren Performa 6 Periode Terakhir</h3>
-                <p className="text-xs text-gray-500 mb-4">Bandingkan perkembangan skor KPI Anda dari bulan ke bulan.</p>
-
+                <h3 className="font-bold text-gray-900 text-base mb-1">Tren Rapor KPI (6 Periode Terakhir)</h3>
+                <p className="text-xs text-gray-500 mb-4">Perbandingan skor performa Anda dari waktu ke waktu.</p>
                 {historyPeriods.length === 0 ? (
-                  <p className="text-xs text-gray-400 text-center py-10">Belum ada riwayat KPI tersimpan.</p>
+                  <p className="text-xs text-gray-400 text-center py-8">Belum ada riwayat KPI.</p>
                 ) : (
-                  <div className="h-64 w-full">
+                  <div className="h-60 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={historyPeriods} margin={{ top: 10, right: 16, left: -16, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -1130,7 +951,7 @@ export default function EmployeeKPI() {
                         <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
                         <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }} />
                         <Legend wrapperStyle={{ fontSize: '12px' }} />
-                        <Line type="monotone" dataKey="score" name="Skor Saya" stroke="#4f46e5" strokeWidth={3} dot={{ r: 5 }} />
+                        <Line type="monotone" dataKey="score" name="Skor Saya" stroke="#4f46e5" strokeWidth={3} dot={{ r: 4 }} />
                         <Line type="monotone" dataKey="ekspektasi" name="Ekspektasi" stroke="#f59e0b" strokeDasharray="5 5" strokeWidth={2} />
                       </LineChart>
                     </ResponsiveContainer>
@@ -1143,27 +964,21 @@ export default function EmployeeKPI() {
                   <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 uppercase">
                     <tr>
                       <th className="px-5 py-3.5 font-bold">Periode</th>
-                      <th className="px-5 py-3.5 font-bold text-center">Jumlah KPI</th>
+                      <th className="px-5 py-3.5 font-bold text-center">Indikator</th>
                       <th className="px-5 py-3.5 font-bold text-center">Skor Akhir</th>
                       <th className="px-5 py-3.5 font-bold text-right">Tren</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {historyPeriods.map((row) => (
-                      <tr key={row.label} className="hover:bg-slate-50/70">
+                      <tr key={row.label}>
                         <td className="px-5 py-3.5 font-bold text-gray-900">{row.label}</td>
-                        <td className="px-5 py-3.5 text-center text-gray-600">{row.count} indikator</td>
+                        <td className="px-5 py-3.5 text-center text-gray-600">{row.count} KPI</td>
                         <td className="px-5 py-3.5 text-center font-extrabold text-indigo-600">{row.score}%</td>
                         <td className="px-5 py-3.5 text-right font-bold">
-                          <span
-                            className={`px-2 py-0.5 rounded-full ${
-                              row.delta > 0
-                                ? 'bg-emerald-50 text-emerald-700'
-                                : row.delta < 0
-                                ? 'bg-rose-50 text-rose-700'
-                                : 'bg-gray-100 text-gray-500'
-                            }`}
-                          >
+                          <span className={`px-2 py-0.5 rounded-full ${
+                            row.delta > 0 ? 'bg-emerald-50 text-emerald-700' : row.delta < 0 ? 'bg-rose-50 text-rose-700' : 'bg-gray-100 text-gray-500'
+                          }`}>
                             {row.delta > 0 ? `+${row.delta}%` : row.delta < 0 ? `${row.delta}%` : 'Stabil'}
                           </span>
                         </td>
@@ -1174,224 +989,88 @@ export default function EmployeeKPI() {
               </div>
             </div>
           )}
-
-          {/* ================================================= */}
-          {/* TAB 4 (OTOMATIS MANAJER): KPI TIM & APPROVAL      */}
-          {/* ================================================= */}
-          {activeTab === 'team' && isManager && (
-            <div className="space-y-5">
-              <div className="bg-white p-5 rounded-3xl border border-indigo-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
-                    <Users size={18} className="text-indigo-600" /> Dashboard KPI Tim — Divisi {me?.department}
-                  </h3>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {teamMembers.length} anggota tim terikat otomatis pada Reporting Line Anda.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowTeamTargetModal(true)}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 shadow-sm"
-                >
-                  <Plus size={15} /> Susun Target Tim
-                </button>
-              </div>
-
-              {/* Ringkasan Anggota Tim */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {teamMembers.map((member) => {
-                  const memberKpis = teamKpis.filter((k) => k.employee_id === member.id);
-                  const memberScore = calcWeightedScore(memberKpis);
-                  const waitingCount = memberKpis.filter((k) => k.approval_status === 'submitted').length;
-                  return (
-                    <div key={member.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm space-y-2.5">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="font-bold text-gray-900 text-sm">{member.full_name}</p>
-                          <p className="text-[11px] text-gray-500">{member.position} • {member.job_level}</p>
-                        </div>
-                        <span className="text-xs font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg">
-                          {memberScore}%
-                        </span>
-                      </div>
-                      <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-indigo-600 rounded-full" style={{ width: `${memberScore}%` }} />
-                      </div>
-                      <div className="flex justify-between items-center text-[11px] text-gray-500">
-                        <span>{memberKpis.length} target KPI</span>
-                        {waitingCount > 0 ? (
-                          <span className="font-bold text-rose-600">{waitingCount} perlu validasi</span>
-                        ) : (
-                          <span className="text-emerald-600 font-semibold">Terkendali</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Daftar Validasi Realisasi Tim */}
-              <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                  <h4 className="font-bold text-gray-900 text-sm">Validasi & Realisasi KPI Anggota</h4>
-                </div>
-                {teamKpis.length === 0 ? (
-                  <p className="text-xs text-gray-400 text-center py-10">
-                    Belum ada target KPI anggota tim pada periode ini. Klik <b>Susun Target Tim</b>.
-                  </p>
-                ) : (
-                  <div className="divide-y divide-gray-100">
-                    {teamKpis.map((item) => {
-                      const pct = getProgressPercent(item.current_value, item.target_value);
-                      return (
-                        <div key={item.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/70">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-bold text-gray-900 text-sm">
-                                {item.employees?.full_name || 'Staf'}
-                              </span>
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
-                                {item.category} • Bobot {item.weight}%
-                              </span>
-                              <span
-                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                  item.approval_status === 'approved'
-                                    ? 'bg-emerald-50 text-emerald-700'
-                                    : item.approval_status === 'submitted'
-                                    ? 'bg-amber-50 text-amber-700'
-                                    : item.approval_status === 'rejected'
-                                    ? 'bg-rose-50 text-rose-700'
-                                    : 'bg-gray-100 text-gray-500'
-                                }`}
-                              >
-                                {item.approval_status}
-                              </span>
-                            </div>
-                            <p className="text-xs font-semibold text-gray-700">{item.title}</p>
-                            <p className="text-xs text-gray-500">
-                              Realisasi: <strong>{item.current_value} / {item.target_value} {item.unit}</strong> ({pct}%)
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <button
-                              onClick={() => handleApproveReject(item, 'approved')}
-                              disabled={item.approval_status === 'approved'}
-                              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white transition-colors disabled:opacity-40"
-                            >
-                              <ThumbsUp size={13} /> Approve
-                            </button>
-                            <button
-                              onClick={() => {
-                                setRejectingKpi(item);
-                                setManagerNoteInput(item.manager_notes || '');
-                              }}
-                              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white transition-colors"
-                            >
-                              <ThumbsDown size={13} /> Reject
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </>
       )}
 
-      {/* MODAL UPDATE PROGRES PRIBADI */}
-      {editingKpi && (
+      {/* MODAL TAMBAH / EDIT KPI KARYAWAN */}
+      {showKpiModal && (
         <div className="fixed inset-0 z-[100] bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden">
-            <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-bold text-gray-900 text-sm">Update Progres KPI</h3>
-              <button onClick={() => setEditingKpi(null)} className="p-1 text-gray-400 hover:bg-gray-200 rounded-full">
-                <X size={18} />
-              </button>
-            </div>
-            <form onSubmit={handleSaveProgress} className="p-6 space-y-4">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white flex items-center justify-between shrink-0">
               <div>
-                <p className="font-bold text-gray-900 text-sm">{editingKpi.title}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Target: <strong>{editingKpi.target_value} {editingKpi.unit}</strong>
-                </p>
+                <h3 className="font-bold text-sm">{editingKpiId ? 'Edit KPI Saya' : 'Tambah KPI Baru'}</h3>
+                <p className="text-[11px] text-indigo-100">Periode {getFullMonth(selectedMonth)} {selectedYear} • Akan dinilai oleh HRD</p>
               </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-600 uppercase mb-1.5">
-                  Realisasi Saat Ini ({editingKpi.unit})
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  min="0"
-                  required
-                  value={progressInput}
-                  onChange={(e) => setProgressInput(e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-              <div className="flex gap-3">
-                <button type="button" onClick={() => setEditingKpi(null)} className="flex-1 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-xs font-bold">
-                  Batal
-                </button>
-                <button type="submit" disabled={saving} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold flex items-center justify-center gap-1.5">
-                  {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                  Simpan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL TAMBAH TARGET TIM (MANAJER) */}
-      {showTeamTargetModal && (
-        <div className="fixed inset-0 z-[100] bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden">
-            <div className="px-6 py-4 bg-indigo-600 text-white flex items-center justify-between">
-              <h3 className="font-bold text-sm">Susun Target KPI Anggota Tim</h3>
-              <button onClick={() => setShowTeamTargetModal(false)} className="p-1 bg-white/20 rounded-full">
+              <button onClick={() => setShowKpiModal(false)} className="p-1.5 bg-white/20 rounded-full hover:bg-white/30">
                 <X size={16} />
               </button>
             </div>
-            <form onSubmit={handleAddTeamTarget} className="p-6 space-y-3.5">
+
+            <form onSubmit={(e) => handleSaveKpi(e, false)} className="p-6 space-y-3.5 overflow-y-auto">
               <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">Anggota Tim</label>
-                <select
-                  required
-                  value={teamForm.employee_id}
-                  onChange={(e) => setTeamForm({ ...teamForm, employee_id: e.target.value })}
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none"
-                >
-                  <option value="">-- Pilih Anggota --</option>
-                  {teamMembers.map((m) => (
-                    <option key={m.id} value={m.id}>{m.full_name} ({m.position})</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-bold text-gray-600 mb-1">Judul Target KPI</label>
+                <label className="block text-xs font-bold text-gray-600 mb-1">Judul Target / Indikator KPI</label>
                 <input
                   required
                   type="text"
-                  value={teamForm.title}
-                  onChange={(e) => setTeamForm({ ...teamForm, title: e.target.value })}
-                  placeholder="Contoh: Output Produksi Harian Tanpa Defect"
-                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none"
+                  value={kpiForm.title}
+                  onChange={(e) => setKpiForm({ ...kpiForm, title: e.target.value })}
+                  placeholder="Contoh: Penyelesaian Laporan Bulanan Tepat Waktu"
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-2">
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">Kategori</label>
+                  <select
+                    value={kpiForm.category}
+                    onChange={(e) => setKpiForm({ ...kpiForm, category: e.target.value })}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-semibold outline-none"
+                  >
+                    <option value="Operasional">Operasional</option>
+                    <option value="Penjualan">Penjualan</option>
+                    <option value="Kedisiplinan">Kedisiplinan</option>
+                    <option value="Kualitas Kerja">Kualitas Kerja</option>
+                    <option value="Pengembangan Diri">Pengembangan Diri</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">Bobot (%)</label>
+                  <input
+                    required
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={kpiForm.weight}
+                    onChange={(e) => setKpiForm({ ...kpiForm, weight: e.target.value })}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs font-bold outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-xs font-bold text-gray-600 mb-1">Target</label>
                   <input
                     required
                     type="number"
-                    value={teamForm.target_value}
-                    onChange={(e) => setTeamForm({ ...teamForm, target_value: e.target.value })}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold"
+                    step="any"
+                    min={1}
+                    value={kpiForm.target_value}
+                    onChange={(e) => setKpiForm({ ...kpiForm, target_value: e.target.value })}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">Realisasi Saya</label>
+                  <input
+                    required
+                    type="number"
+                    step="any"
+                    min={0}
+                    value={kpiForm.current_value}
+                    onChange={(e) => setKpiForm({ ...kpiForm, current_value: e.target.value })}
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-bold outline-none"
                   />
                 </div>
                 <div>
@@ -1399,60 +1078,55 @@ export default function EmployeeKPI() {
                   <input
                     required
                     type="text"
-                    value={teamForm.unit}
-                    onChange={(e) => setTeamForm({ ...teamForm, unit: e.target.value })}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-600 mb-1">Bobot %</label>
-                  <input
-                    required
-                    type="number"
-                    value={teamForm.weight}
-                    onChange={(e) => setTeamForm({ ...teamForm, weight: e.target.value })}
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold"
+                    value={kpiForm.unit}
+                    onChange={(e) => setKpiForm({ ...kpiForm, unit: e.target.value })}
+                    placeholder="%, tugas, klien"
+                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none"
                   />
                 </div>
               </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1">Deskripsi Target (Opsional)</label>
+                <textarea
+                  rows={2}
+                  value={kpiForm.description}
+                  onChange={(e) => setKpiForm({ ...kpiForm, description: e.target.value })}
+                  placeholder="Rincian target kerja..."
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs outline-none resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1">Catatan / Bukti Pencapaian untuk HRD</label>
+                <textarea
+                  rows={2}
+                  value={kpiForm.employee_notes}
+                  onChange={(e) => setKpiForm({ ...kpiForm, employee_notes: e.target.value })}
+                  placeholder="Jelaskan hasil kerja atau lampirkan link bukti..."
+                  className="w-full bg-gray-50 border border-gray-200 rounded-xl px-3.5 py-2 text-xs outline-none resize-none"
+                />
+              </div>
+
               <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setShowTeamTargetModal(false)} className="flex-1 py-2.5 bg-gray-100 rounded-xl text-xs font-bold">
-                  Batal
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold transition-colors"
+                >
+                  Simpan Draft
                 </button>
-                <button type="submit" disabled={saving} className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-xs font-bold">
-                  {saving ? 'Menyimpan...' : 'Simpan Target'}
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={(e) => handleSaveKpi(e as any, true)}
+                  className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  Simpan & Ajukan ke HRD
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL REJECT NOTE (MANAJER) */}
-      {rejectingKpi && (
-        <div className="fixed inset-0 z-[100] bg-gray-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 space-y-4">
-            <h3 className="font-bold text-rose-600 text-sm">Tolak / Minta Revisi Realisasi KPI</h3>
-            <p className="text-xs text-gray-600">{rejectingKpi.title}</p>
-            <textarea
-              rows={3}
-              required
-              value={managerNoteInput}
-              onChange={(e) => setManagerNoteInput(e.target.value)}
-              placeholder="Tuliskan alasan revisi untuk karyawan..."
-              className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-rose-500"
-            />
-            <div className="flex gap-2">
-              <button onClick={() => setRejectingKpi(null)} className="flex-1 py-2.5 bg-gray-100 rounded-xl text-xs font-bold">
-                Batal
-              </button>
-              <button
-                onClick={() => handleApproveReject(rejectingKpi, 'rejected', managerNoteInput)}
-                className="flex-1 py-2.5 bg-rose-600 text-white rounded-xl text-xs font-bold"
-              >
-                Kirim Revisi
-              </button>
-            </div>
           </div>
         </div>
       )}
