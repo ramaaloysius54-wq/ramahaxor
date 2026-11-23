@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-and-deploy:
-    name: Deploy HRIS to VPS
+    name: Deploy 
     runs-on: ubuntu-latest
 
     steps:

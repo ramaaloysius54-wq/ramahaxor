@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 // TAMBAHAN: Import ikon X, CheckCircle, dan XCircle untuk notifikasi
 import { Bell, LogOut, Clock, CalendarDays, ReceiptText, User, X, CheckCircle, XCircle } from 'lucide-react'; 
+import EmployeeKPIWidget from '../kpi/EmployeeKPIWidget';
+
 
 export default function EmployeeDashboard() {
   const [profile, setProfile] = useState<any>(null);

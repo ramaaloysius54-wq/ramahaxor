@@ -20,7 +20,7 @@ function useGeolocationWithAntiMock() {
     navigator.geolocation.getCurrentPosition(
       (position) => {
         let mocked = false;
-        
+
         if (position.coords.accuracy <= 1.0) {
           mocked = true;
         }
@@ -43,13 +43,13 @@ function useGeolocationWithAntiMock() {
         if (error.code === 1) errorMsg = 'Izin lokasi ditolak oleh Anda.';
         else if (error.code === 2) errorMsg = 'Lokasi tidak tersedia (Sinyal lemah).';
         else if (error.code === 3) errorMsg = 'Timeout: Sinyal GPS terlalu lama merespons.';
-        
+
         setLocation(prev => ({ ...prev, error: errorMsg }));
       },
       {
         enableHighAccuracy: true,
-        timeout: 15000, 
-        maximumAge: 0 
+        timeout: 15000,
+        maximumAge: 0
       }
     );
   }, []);
@@ -57,12 +57,15 @@ function useGeolocationWithAntiMock() {
   return location;
 }
 
+// Helper tanggal lokal (WIB) format YYYY-MM-DD agar tidak selisih 7 jam dengan UTC
+const getLocalDate = () => new Date().toLocaleDateString('en-CA');
+
 export default function AttendanceCheckIn({ session: _session }: { session?: any }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  
+
   const location = useGeolocationWithAntiMock();
-  
+
   const [photo, setPhoto] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -77,16 +80,17 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
 
-        const today = new Date().toISOString().split('T')[0];
+        const today = getLocalDate();
 
-        // Cek data absen terakhir karyawan ini
+        // Cek data absen hari ini milik karyawan
         const { data } = await supabase
           .from('attendance_records')
           .select('id, date, check_in, check_out')
           .eq('employee_id', user.id)
+          .eq('date', today)
           .order('check_in', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
         const record = data as any;
         if (record) {
@@ -94,11 +98,7 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
             setAttendanceMode('pulang');
             setActiveRecordId(record.id);
           } else {
-            if (record.date === today) {
-              setAttendanceMode('selesai');
-            } else {
-              setAttendanceMode('hadir');
-            }
+            setAttendanceMode('selesai');
           }
         } else {
           setAttendanceMode('hadir');
@@ -132,7 +132,7 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
       ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
       setPhoto(dataUrl);
-      
+
       const stream = video.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
       setIsCameraActive(false);
@@ -146,7 +146,7 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
 
   const handleCheckIn = async () => {
     if (!photo) {
-      alert('Foto selfie wajib ada sebelum Check-In.');
+      alert('Foto selfie wajib ada sebelum absensi.');
       return;
     }
 
@@ -155,16 +155,20 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
       return;
     }
 
-    const currentHour = new Date().getHours();
-    
+    // Validasi jam masuk (06:00 - maksimal 12:00) dan pulang (mulai 17:00)
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    const totalMinutes = currentHour * 60 + currentMinute;
+
     if (attendanceMode === 'hadir') {
-      if (currentHour < 6 || currentHour > 9) {
-        alert('❌ GAGAL: Waktu Absen Hadir hanya diperbolehkan mulai pukul 06:00 hingga 09:59 pagi.');
+      if (totalMinutes < 6 * 60 || totalMinutes > 12 * 60) {
+        alert('❌ GAGAL: Waktu Absen Masuk hanya diperbolehkan pukul 06:00 hingga maksimal 12:00 siang.');
         return;
       }
     } else if (attendanceMode === 'pulang') {
-      if (currentHour > 6 && currentHour < 17) {
-        alert('❌ GAGAL: Waktu Absen Pulang hanya diperbolehkan mulai pukul 17:00 sore hingga 06:59 pagi.');
+      if (currentHour < 17) {
+        alert('❌ GAGAL: Waktu Absen Pulang baru diperbolehkan mulai pukul 17:00 sore.');
         return;
       }
     }
@@ -172,8 +176,8 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Anda harus login terlebih dahulu.");
-      
+      if (!user) throw new Error('Anda harus login terlebih dahulu.');
+
       const realUserId = user.id;
 
       // 1. Upload Foto
@@ -193,7 +197,7 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
           .from('attendance_records')
           .insert({
             employee_id: realUserId,
-            date: new Date().toISOString().split('T')[0],
+            date: getLocalDate(),
             check_in: new Date().toISOString(),
             photo_url: uploadData.path,
             latitude: location.latitude || null,
@@ -203,8 +207,9 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
           });
 
         if (dbError) throw dbError;
-
       } else if (attendanceMode === 'pulang') {
+        if (!activeRecordId) throw new Error('Data absen masuk hari ini tidak ditemukan.');
+
         const { error: dbError } = await supabase
           .from('attendance_records')
           .update({
@@ -220,24 +225,24 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
         const { data: empData } = await supabase.from('employees').select('full_name').eq('id', realUserId).single();
         const empName = (empData as any)?.full_name || 'Seorang Karyawan';
 
-        const noWhatsappHRD = "088227142563"; 
-        
+        const noWhatsappHRD = '088227142563';
+        const judulNotif = attendanceMode === 'hadir' ? 'NOTIFIKASI ABSENSI MASUK' : 'NOTIFIKASI ABSENSI PULANG';
         const statusTeks = attendanceMode === 'hadir' ? 'Check-In (Hadir)' : 'Check-Out (Pulang)';
-        const pesanWA = `🚨 *NOTIFIKASI ABSENSI MASUK* 🚨\n\nNama: *${empName}*\nWaktu: ${new Date().toLocaleString('id-ID')}\nStatus: Berhasil ${statusTeks}.\n\nSilakan cek Dashboard HRD untuk melihat foto dan lokasi absensi.`;
+        const pesanWA = `🚨 *${judulNotif}* 🚨\n\nNama: *${empName}*\nWaktu: ${new Date().toLocaleString('id-ID')}\nStatus: Berhasil ${statusTeks}.\n\nSilakan cek Dashboard HRD untuk melihat foto dan lokasi absensi.`;
 
-        await fetch("https://api.fonnte.com/send", {
-          method: "POST",
+        await fetch('https://api.fonnte.com/send', {
+          method: 'POST',
           headers: {
-            "Authorization": "W6WFTapyTqYoo5gMDa7V", 
+            'Authorization': 'W6WFTapyTqYoo5gMDa7V',
           },
           body: new URLSearchParams({
             target: noWhatsappHRD,
             message: pesanWA,
-            countryCode: "62" 
+            countryCode: '62'
           }),
         });
       } catch (waError) {
-        console.warn("Absensi berhasil, namun gagal kirim notif WA:", waError);
+        console.warn('Absensi berhasil, namun gagal kirim notif WA:', waError);
       }
 
       setSuccess(true);
@@ -269,8 +274,8 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
           {success ? 'Absensi Berhasil!' : 'Selesai'}
         </h2>
         <p className="text-gray-500">
-          {success 
-            ? 'Waktu kehadiran Anda telah dicatat oleh sistem.' 
+          {success
+            ? 'Waktu kehadiran Anda telah dicatat oleh sistem.'
             : 'Anda sudah menyelesaikan absensi Hadir dan Pulang untuk hari ini. Selamat beristirahat!'}
         </p>
       </div>
@@ -283,7 +288,11 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
         <h2 className="text-2xl font-bold text-gray-800">
           {attendanceMode === 'hadir' ? 'Absensi Hadir' : 'Absensi Pulang'}
         </h2>
-        <p className="text-sm text-gray-500">Ambil foto selfie di lokasi kerja</p>
+        <p className="text-sm text-gray-500">
+          {attendanceMode === 'hadir'
+            ? 'Jadwal masuk: 06:00 – 12:00 WIB'
+            : 'Jadwal pulang: mulai 17:00 WIB'}
+        </p>
       </div>
 
       {/* GPS Status Card */}
@@ -338,9 +347,9 @@ export default function AttendanceCheckIn({ session: _session }: { session?: any
           </button>
         </div>
       ) : (
-        <button 
-          onClick={capturePhoto} 
-          disabled={!isCameraActive || location.isMocked} 
+        <button
+          onClick={capturePhoto}
+          disabled={!isCameraActive || location.isMocked}
           className="w-full py-4 rounded-xl font-bold text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50 transition-colors shadow-soft"
         >
           Ambil Foto Selfie
